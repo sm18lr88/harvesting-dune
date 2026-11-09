@@ -1,0 +1,1027 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="data:,">
+<title>Harvesting Dune</title>
+<style>
+  /* Design tokens. Every colour, size and space below comes from here.
+     Palette: the companion's warm dark sand; one accent (cyan, the colour of the route line); class
+     inks appear only as dots. Type ladder 30 / 23 / 18 / 14 / 12 (each heading step >= 1.25x). */
+  :root {
+    color-scheme: dark;
+    --bg: #14110d; --surface: #1c1813; --surface-2: #272019; --surface-3: #332b22;
+    --line: #3a3226; --line-strong: #4b4134;
+    --ink: #eadfcb; --ink-dim: #a3957d;
+    --accent: #4cc9f0; --accent-wash: rgba(76, 201, 240, .12); --accent-wash-2: rgba(76, 201, 240, .22);
+    --good: #5bd18b; --warn: #ffd166; --bad: #e0645a; --bad-ink: #f3a49c; --bad-wash: rgba(224, 100, 90, .12);
+    --fs-display: 1.0625rem; --fs-h1: .8125rem; --fs-h2: .75rem; --fs-body: .8125rem; --fs-small: .75rem;
+    --s1: 2px; --s2: 4px; --s3: 6px; --s4: 8px; --s5: 10px; --s6: 14px;
+    --r-sm: 0; --r-md: 0;
+    --ctl: 26px;
+    --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+    --mono: "Cascadia Mono", Consolas, ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { scrollbar-color: var(--line-strong) var(--bg); scroll-padding-top: 36px; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: var(--fs-body)/1.35 var(--font); overflow-wrap: anywhere; }
+  ::selection { background: var(--accent-wash-2); color: var(--ink); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  input, textarea { caret-color: var(--accent); }
+  h1, h2, p { margin: 0; }
+  /* names, notes and details come from the game data: an unbroken string wraps (body) instead of widening the page */
+  h1, h2, p, li, dd, .display, .sum, .pick, .count, .cols, .cage, .problems, .kv, .chip, .field > span, .note, .switch, kbd, button { min-width: 0; }
+  .data td, .data th { overflow-wrap: break-word; }  /* tables keep their columns; the wrapper scrolls */
+  .grp > summary { overflow-wrap: normal; }  /* a non-wrapping row: the class name never splits mid-word */
+  .grp .count { overflow-wrap: anywhere; }
+  h1 { font-size: var(--fs-h1); font-weight: 600; line-height: 1.2; }
+  h2 { font-size: var(--fs-body); font-weight: 600; line-height: 1.25; }
+  .display { text-transform: none; letter-spacing: 0; color: var(--ink); }
+  .help { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  p, .note { max-width: 70ch; text-wrap: pretty; }
+  .note, .meta, .help { color: var(--ink-dim); }
+  .small { font-size: var(--fs-small); }
+  .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .nw { white-space: nowrap; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  kbd { font: .6875rem var(--mono); padding: 0 4px; border: 1px solid var(--line-strong); border-radius: 4px; color: var(--ink-dim); }
+  .dot { display: inline-block; flex: none; width: 7px; height: 7px; background: var(--c, var(--ink-dim)); }
+
+  /* top bar: connection, saved feedback */
+  .top { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s4);
+    min-height: 30px; padding: var(--s2) var(--s4); background: var(--surface); border-bottom: 1px solid var(--line); }
+  .brand { font-weight: 600; }
+  .conn { display: inline-flex; align-items: center; gap: var(--s2); color: var(--ink-dim); }
+  .conn .dot { --c: var(--bad); }
+  .conn.on .dot { --c: var(--good); }
+  #saved { margin-left: auto; min-height: 1.45em; }
+  #saved.good { color: var(--good); }
+  #saved.bad { color: var(--bad-ink); }
+
+  .page { padding: var(--s4); display: grid; gap: var(--s4); align-items: start; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--s4); min-width: 0; }
+
+  /* problem banner */
+  .problems { background: var(--bad-wash); border-radius: var(--r-md); padding: var(--s4); display: grid; gap: var(--s2); }
+  .problems h2 { color: var(--bad-ink); }
+  .problems ul { margin: 0; padding-left: 20px; }
+  .problems .row { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s3); align-items: center; }
+  .problems textarea { width: 100%; font: var(--fs-small) var(--mono); background: var(--surface); color: var(--ink); border: 1px solid var(--line-strong); border-radius: var(--r-sm); padding: var(--s2); }
+
+  /* board: three columns that each fill top to bottom (no row shared across columns) */
+  .board { display: grid; gap: var(--s4); align-items: start; grid-template-columns: minmax(0, 1fr); }
+  .col { display: grid; gap: var(--s4); align-content: start; min-width: 0; }
+  @media (min-width: 900px) {
+    .board { grid-template-columns: minmax(250px, 330px) minmax(0, 1fr); }
+    .col-a { grid-row: span 2; } .col-c { grid-column: 2; }
+  }
+  @media (min-width: 1400px) {
+    .board { grid-template-columns: minmax(270px, 340px) minmax(0, 1.25fr) minmax(0, 1fr); }
+    .col-a { grid-row: auto; } .col-c { grid-column: auto; }
+  }
+  .find { display: grid; gap: var(--s3); min-width: 0; }
+  .browse { min-width: 0; }
+  .searchbox { position: relative; }
+  .searchbox svg { position: absolute; left: 8px; top: 50%; width: 14px; height: 14px; transform: translateY(-50%); color: var(--ink-dim); pointer-events: none; }
+  #q { width: 100%; height: 28px; padding: 0 var(--s3); font: inherit; color: var(--ink);
+    background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-md); }
+  #q::placeholder { color: var(--ink-dim); }
+  #q:focus-visible { border-color: var(--accent); outline-offset: 0; }
+  .picks { display: grid; gap: var(--s1); grid-template-columns: repeat(auto-fill, minmax(min(13rem, 100%), 1fr)); }
+  .pick { display: grid; grid-template-columns: 12px minmax(0, 1fr); column-gap: var(--s2); align-items: start; text-align: left; min-height: var(--ctl);
+    padding: var(--s2) var(--s3); background: var(--surface-2); border: 1px solid transparent; border-radius: var(--r-sm);
+    color: var(--ink); font: inherit; line-height: 1.35; cursor: pointer; transition: background-color .12s; }
+  .pick:hover { background: var(--surface-3); }
+  .pick:active { transform: translateY(1px); }
+  .pick[aria-pressed="true"] { background: var(--accent-wash); }
+  .pick[aria-pressed="true"] .pick-name { color: var(--accent); }
+  .pick svg { width: 12px; height: 12px; margin-top: 2px; color: var(--accent); visibility: hidden; }
+  .pick[aria-pressed="true"] svg { visibility: visible; }
+  [hidden] { display: none !important; }  /* a class's own display rule must not show a hidden part */
+.pick.far:not(:hover) { color: var(--ink-dim); background: transparent; border-color: var(--line); }
+  .pick-name { font-weight: 500; overflow-wrap: anywhere; }
+  .pick-meta { grid-column: 2; color: var(--ink-dim); font-size: var(--fs-small); }
+  .pick-meta:empty { display: none; }
+  .tag { display: inline-block; font-size: .6875rem; line-height: 1.3; padding: 0 4px; background: var(--surface-3); color: var(--ink-dim); margin-left: var(--s1); }
+  .tag.chance { color: var(--warn); }
+  .empty { color: var(--ink-dim); padding: var(--s2) 0; }
+  .grp { border-top: 1px solid var(--line); }
+  .grp > summary { display: flex; align-items: center; gap: var(--s2); min-height: var(--ctl); padding: var(--s2) var(--s1); cursor: pointer; list-style: none; font-weight: 500; }
+  .grp > summary::-webkit-details-marker { display: none; }
+  .grp .count { margin-left: auto; color: var(--ink-dim); font-size: var(--fs-small); font-weight: 400; text-align: right; }
+  .grp .count svg { width: 14px; height: 14px; vertical-align: -3px; color: var(--accent); }
+  .grp .picks { padding: 0 0 var(--s3); }
+  .chev { display: inline-block; flex: none; width: 6px; height: 6px; margin: 0 var(--s1) 0 var(--s2); border-right: 2px solid var(--ink-dim); border-bottom: 2px solid var(--ink-dim);
+    transform: rotate(45deg) translateY(-2px); transition: transform .12s; }
+  details[open] > summary .chev { transform: rotate(-135deg) translateY(-2px); }
+
+  /* current target */
+  .target { display: grid; gap: var(--s4); }
+  .target > *, .sec-body > * { min-width: 0; }  /* a wide table scrolls in its wrapper instead of widening the page */
+  .display { font-size: var(--fs-display); font-weight: 600; line-height: 1.15; overflow-wrap: anywhere; }
+  .chip { display: inline-flex; align-items: center; gap: var(--s2); max-width: 100%; }
+  .chip .dot { --c: var(--ink-dim); }
+  .chip.good .dot { --c: var(--good); }
+  .chip.warn .dot { --c: var(--warn); }
+  .kv { display: grid; grid-template-columns: fit-content(45%) minmax(0, 1fr); gap: var(--s2) var(--s3); margin: 0; }
+  .kv dt { color: var(--ink-dim); }
+  .kv dd { margin: 0; overflow-wrap: anywhere; }
+  .controls { display: flex; flex-wrap: wrap; gap: var(--s3) var(--s4); align-items: flex-end; }
+  .controls .switch { min-height: var(--ctl); }
+  .actions { display: flex; flex-wrap: wrap; gap: var(--s2); }
+
+  /* controls */
+  .field { display: flex; flex-direction: column; gap: var(--s1); min-width: 0; }
+  .field > span { font-size: var(--fs-small); color: var(--ink-dim); }
+  .inline { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); min-height: var(--ctl); }
+  select, input[type="number"], input[type="password"], input[type="search"], input[type="text"], button { min-height: var(--ctl); font: inherit; color: var(--ink); background: var(--surface-2);
+    border: 1px solid var(--line-strong); border-radius: var(--r-sm); padding: 0 var(--s3); max-width: 100%; }
+  button { padding: var(--s2) var(--s3); }
+  select { padding-right: var(--s4); }
+  input[type="number"] { width: 6em; font-variant-numeric: tabular-nums; }
+  button { cursor: pointer; transition: background-color .12s; }
+  button:hover { background: var(--surface-3); }
+  button:active { transform: translateY(1px); }
+  button[aria-pressed="true"] { background: var(--accent-wash); color: var(--accent); border-color: transparent; }
+  input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px; margin: 0; flex: none; }
+  .tick { display: inline-flex; align-items: center; gap: var(--s2); min-height: var(--ctl); padding: 0 var(--s2); border-radius: var(--r-sm); cursor: pointer; }
+  .tick:hover { background: var(--surface-2); }
+  .ticks { display: flex; flex-wrap: wrap; gap: var(--s1) var(--s2); }
+  .switch { display: inline-flex; align-items: center; gap: var(--s2); cursor: pointer; }
+
+  /* sections */
+  .sec { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); min-width: 0; }
+  .sec > summary { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--s1) var(--s3); min-height: 30px; padding: var(--s2) var(--s4); cursor: pointer; list-style: none; }
+  .sec > summary::-webkit-details-marker { display: none; }
+  .sec > summary:hover { background: var(--surface-2); border-radius: var(--r-md); }
+  .sec[open] > summary:hover { border-radius: var(--r-md) var(--r-md) 0 0; }
+  .sec .sum { color: var(--ink-dim); min-width: 0; }
+  @media (max-width: 599px) {  /* title and chevron on the first row, the summary line under them */
+    .sec > summary { grid-template-columns: minmax(0, 1fr) auto; }
+    .sec > summary h2 { grid-row: 1; }
+    .sec > summary .chev { grid-column: 2; grid-row: 1; }
+    .sec .sum { grid-column: 1 / -1; grid-row: 2; }
+    .sec .sum:empty { display: none; }
+  }
+  .sec-body { padding: var(--s1) var(--s4) var(--s4); display: grid; gap: var(--s4); min-width: 0; }
+  .cols { display: grid; gap: var(--s4) var(--s5); grid-template-columns: repeat(auto-fit, minmax(min(12rem, 100%), 1fr)); }
+  .cols > div { display: grid; gap: var(--s2); align-content: start; min-width: 0; }
+  .cols strong { font-weight: 600; }
+  .cols ul { margin: 0; padding-left: 18px; }
+  .cols button { justify-self: start; }
+  .mm-grp { display: grid; gap: var(--s1); }
+  @media (min-width: 600px) { .mm-grp { grid-template-columns: 7.5rem minmax(0, 1fr); align-items: baseline; } }  /* class name left of its ticks */
+  .mm-head { display: flex; align-items: center; gap: var(--s2); font-weight: 500; min-height: 24px; }
+  .table-wrap { overflow-x: auto; }
+  .table-wrap.more { mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }  /* cue: more columns to the right */
+  .data { width: 100%; border-collapse: collapse; }
+  .data th, .data td { text-align: left; padding: var(--s1) var(--s2); border-bottom: 1px solid var(--line); vertical-align: top; }
+  .data th { color: var(--ink-dim); font-weight: 500; }
+  .data tr.sec-row td { font-weight: 600; padding-top: var(--s3); }
+  .data tr.no td { color: var(--ink-dim); }
+  .data .rank { color: var(--accent); font-weight: 600; }
+  .data tr.sel td { background: var(--accent-wash); }
+  #farm { display: grid; gap: var(--s2); }
+  .w-rank { width: 2.5em; } .w-dist { width: 6em; }
+  .data img { width: 16px; height: 16px; vertical-align: middle; }
+  .bar { display: inline-block; height: 6px; border-radius: 3px; background: var(--accent); vertical-align: middle; margin-right: 6px; }
+  .cards { display: grid; gap: var(--s3); grid-template-columns: repeat(auto-fill, minmax(min(16rem, 100%), 1fr)); }
+  .cage { background: var(--surface-2); border-radius: var(--r-sm); padding: var(--s3); display: grid; gap: var(--s2); min-width: 0; }
+  .cage-head { display: flex; flex-wrap: wrap; gap: var(--s1) var(--s3); align-items: baseline; }
+  .cage-head .kind { font-weight: 600; }
+  .cage.ultra .kind { color: var(--warn); }
+  .cage .data td { border-color: var(--surface-3); }
+  .special td { color: var(--warn); }
+  .r-Uncommon { color: #7fd18b; } .r-Rare { color: #6fb3ff; } .r-Epic { color: #c98cf5; } .r-Legendary, .r-Unique { color: #ffb347; }
+  .fresh { color: #ff6fd0; font-weight: 600; }
+  .about { color: var(--ink-dim); font-size: var(--fs-small); max-width: none; }
+  /* guild: the key takes the free width of its line */
+  #gKeyForm { flex: 1 1 16em; }
+  #sec-guild .cols { grid-template-columns: repeat(auto-fit, minmax(min(22rem, 100%), 1fr)); }  /* roster and finds side by side only when each row still fits on one line */
+  #gkey { flex: 1 1 12em; }
+
+  /* characters: the guild list on top, one character's profile under it in packed columns */
+  .chars { display: grid; gap: var(--s4); min-width: 0; }
+  .chars tr[data-char] { cursor: pointer; }
+  .chars tr[data-char]:hover td { background: var(--surface-2); }
+  .chars tr.sel td { background: var(--accent-wash); }
+  .cblocks { columns: 19rem; column-gap: var(--s5); margin-top: var(--s3); }
+  .cblocks > div { display: grid; gap: var(--s2); min-width: 0; break-inside: avoid; margin-bottom: var(--s4); }
+  .cblocks .table-wrap { max-height: 24rem; overflow-y: auto; }
+  #cRecipeQ { width: 100%; }
+
+  /* no accepted guild key (gate.py): only the key field and one line why */
+  .gate { display: grid; gap: var(--s3); padding: var(--s5); background: var(--surface); border: 1px solid var(--line); }
+  .gate-row { display: flex; gap: var(--s3); }
+  .gate-row input { flex: 1; min-width: 0; }
+
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; } }
+</style>
+</head>
+<body>
+<header class="top">
+  <span class="brand">Harvesting Dune</span>
+  <span class="conn" id="connWrap"><span class="dot"></span><span id="conn">connecting&hellip;</span></span>
+  <output id="saved" role="status" aria-live="polite"></output>
+</header>
+<main class="page">
+  <section id="gate" class="gate" aria-labelledby="gateLabel" hidden>
+    <h1 id="gateLabel" class="sr-only">Guild key</h1>
+    <div class="gate-row"><input type="password" id="gateKey" autocomplete="off" spellcheck="false" placeholder="Guild key (gs1_&hellip;)" aria-label="Guild key"><button type="button" id="gateSave">Save key</button></div>
+    <p id="gateWhy" class="note" role="status"></p>
+  </section>
+  <section id="problems" class="problems" role="alert" hidden>
+    <h2 id="problemsTitle"></h2>
+    <p>The gaming.tools companion is not affected. To get this fixed, press <b>Copy report</b> and send the text to the developer.</p>
+    <div class="row"><button type="button" id="copyReport">Copy report</button> <span id="copied" class="note"></span></div>
+    <ul id="problemList"></ul>
+  </section>
+
+  <div class="board" id="board">
+  <div class="col col-a">
+    <section class="find" aria-labelledby="qLabel">
+      <h1 id="qLabel" class="sr-only">What are you looking for?</h1>
+      <div class="searchbox">
+        <input id="q" type="search" autocomplete="off" spellcheck="false" aria-labelledby="qLabel" aria-describedby="qHelp" placeholder="Search: spice, iron, Holtzman Actuator, regis&hellip;">
+      </div>
+      <p id="qHelp" class="help">Map resources, parts and materials, unique gear and schematics, downed ships and wrecks. Typos are fine. Pick one to make it the target.</p>
+      <div id="matches"></div>
+    </section>
+    <div id="browse" class="browse"></div>
+  <details class="sec" id="sec-dd">
+    <summary><h2>Deep Desert</h2><span class="sum" id="sum-dd"></span><span class="chev" aria-hidden="true"></span></summary>
+    <div class="sec-body">
+      <p class="note">You are in: <b id="zoneHere">&ndash;</b></p>
+      <label class="tick" style="justify-self:start"><input type="checkbox" id="pvpOnly"> PvP areas only</label>
+      <div class="cols">
+        <label class="field"><span>Last PvE row</span><select id="pveRow"><option>A</option><option>B</option><option>C</option><option>D</option><option>E</option><option>F</option><option>G</option><option>H</option><option>I</option></select></label>
+        <label class="field"><span>Lines start in row</span><select id="linesRow"><option value="A">A &middot; at the entrance</option><option value="B">B &middot; 1 row in</option><option value="C">C &middot; 2 rows in</option><option value="D">D &middot; 3 rows in</option><option value="E">E &middot; 4 rows in</option><option value="F">F &middot; 5 rows in</option><option value="G">G &middot; 6 rows in</option><option value="H">H &middot; 7 rows in</option><option value="I">I &middot; 8 rows in</option></select></label>
+        <label class="field"><span>PvP yield &times;</span><input id="pvpYield" type="number" min="1" max="10" step="0.1"></label>
+      </div>
+
+    </div>
+  </details>
+  </div>
+  <div class="col col-b">
+    <section class="card target" aria-labelledby="tName">
+      <div>
+        <h2 id="tName" class="display">&ndash;</h2>
+        <p id="tMeta" class="meta"></p>
+      </div>
+      <dl class="kv" id="tFacts"></dl>
+      <div id="itemInfo"></div>
+      <div id="farm"></div>
+      <div class="controls">
+        <label class="field"><span>Switch target</span><select id="res"></select></label>
+        <label class="field"><span>Vehicle</span><select id="veh"><option>auto</option><option>sandcrawler</option><option>buggy</option><option>sandbike</option><option>ornithopter</option></select></label>
+        <span id="vehNote" class="note"></span>
+      </div>
+      <div class="controls">
+        <label class="switch" title="Ctrl+Alt+Down"><input type="checkbox" id="toggle"> Recommendations</label>
+        <div class="actions">
+          <button type="button" id="base" title="Use your current position as the unload / return point">Set base here</button>
+          <button type="button" id="block" title="Mark the current 50 m cell impassable for the planned vehicle">Block here</button>
+        </div>
+      </div>
+    </section>
+  <details class="sec" id="sec-mm">
+    <summary><h2>Minimap &amp; lines</h2><span class="sum" id="sum-mm"></span><span class="chev" aria-hidden="true"></span></summary>
+    <div class="sec-body">
+      <div>
+        <label class="switch inline" title="Ctrl+Alt+L"><input type="checkbox" id="lines"> Directional lines</label>
+        <p id="linesNote" class="note"></p>
+      </div>
+      <div class="inline">
+        <label for="maxKm">Max distance for lines</label>
+        <input id="maxKm" type="number" min="0" max="100" step="0.5"> <span>km</span>
+        <span class="note">0 = none</span>
+      </div>
+      <div>
+        <div id="mm" style="display:grid;gap:var(--s1);margin-top:var(--s2)"></div>
+      </div>
+      <div>
+        <p class="note">Extra markers (not searched):</p>
+        <div class="ticks" id="mmx"></div>
+      </div>
+    </div>
+  </details>
+  <details class="sec" id="sec-guild">
+    <summary><h2>Guild</h2><span class="sum" id="sum-guild"></span><span class="chev" aria-hidden="true"></span></summary>
+    <div class="sec-body">
+      <div class="inline">
+        <span id="gKeyForm" class="inline"><input type="password" id="gkey" autocomplete="off" spellcheck="false" placeholder="Guild key (gs1_&hellip;)" aria-label="Guild key"><button type="button" id="gSave">Save key</button></span>
+        <span id="gKeySaved" class="inline" hidden><span>key saved</span><button type="button" id="gChange">Change</button><button type="button" id="gRemove">Remove</button></span>
+        <span id="gStatus" class="note" role="status"></span>
+        <span id="gTrack" class="note" hidden>turn on session tracking in the companion to share</span>
+      </div>
+      <div class="controls">
+        <label class="switch"><input type="checkbox" id="gPause"> Pause sync</label>
+        <label class="switch"><input type="checkbox" id="gPos"> Share my position</label>
+      </div>
+      <div class="cols">
+        <div><strong>Members</strong> <span class="note">ticked = drawn on your minimap</span><div id="gMembers"></div></div>
+        <div><strong>Shared finds</strong> <span class="note">nearest first</span><div id="gSightings"></div></div>
+      </div>
+    </div>
+  </details>
+  </div>
+  <div class="col col-c">
+  <details class="sec" id="sec-ships">
+    <summary><h2>Ships &amp; wrecks</h2><span class="sum" id="sum-ships"></span><span class="chev" aria-hidden="true"></span></summary>
+    <div class="sec-body">
+      <div class="cols">
+        <div><strong>Downed ships</strong> <span class="note">random, temporary</span><div id="shipList"></div><button type="button" data-go="downed_ships">Lead me to downed ships</button></div>
+        <div><strong>Fixed shipwrecks</strong> <span class="note">always there</span><div id="wreckList"></div><button type="button" data-go="shipwrecks">Lead me to fixed shipwrecks</button></div>
+        <div><strong>Buggy &amp; ornithopter wrecks</strong> <span class="note">always there</span><button type="button" data-go="wrecks">Lead me to vehicle wrecks</button></div>
+      </div>
+    </div>
+  </details>
+  <details class="sec" id="sec-loot">
+    <summary><h2>Rare loot nearby</h2><span class="sum" id="sum-loot"></span><span class="chev" aria-hidden="true"></span></summary>
+    <div class="sec-body">
+      <div id="cages" class="cards"></div>
+    </div>
+  </details>
+  <details class="sec" id="sec-blows">
+    <summary><h2>Spice blows</h2><span class="sum" id="sum-blows"></span><span class="chev" aria-hidden="true"></span></summary>
+    <div class="sec-body">
+      <div id="blows"></div>
+    </div>
+  </details>
+  <details class="sec" id="sec-diag">
+    <summary><h2>Diagnostics</h2><span class="sum" id="sum-diag"></span><span class="chev" aria-hidden="true"></span></summary>
+    <div class="sec-body">
+      <dl class="kv" id="facts"></dl>
+      <div>
+        <div class="table-wrap"><table class="data"><thead><tr><th class="w-rank">#</th><th class="num w-dist">Dist</th><th>Area</th></tr></thead><tbody id="rows"></tbody></table></div>
+      </div>
+      <p id="about" class="about"></p>
+    </div>
+  </details>
+  </div>
+  </div>
+  <details class="sec" id="sec-chars">
+    <summary><h2>Characters</h2><span class="sum" id="sum-chars"></span><span class="chev" aria-hidden="true"></span></summary>
+    <div class="sec-body">
+      <div class="controls">
+        <label class="switch"><input type="checkbox" id="cShare"> Share my character</label>
+        <label class="switch"><input type="checkbox" id="cSession"> Share this session</label>
+        <span class="note">Inventory: the companion app does not show it.</span>
+      </div>
+      <div class="chars">
+        <div id="cRows"></div>
+        <div id="cDetail"></div>
+      </div>
+    </div>
+  </details>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const PAGE_VERSION = "%PAGE_VERSION%";
+// script errors on this page go to the detector's log (data\logs\errors.log)
+const report = (where, msg) => { try { fetch(`/log?where=${encodeURIComponent(where)}&msg=${encodeURIComponent(String(msg).slice(0, 500))}`, { method: "POST" }); } catch (_) {} };
+window.addEventListener("error", (e) => report("error", `${e.message} at ${e.lineno}:${e.colno}`));
+window.addEventListener("unhandledrejection", (e) => report("promise", e.reason && (e.reason.stack || e.reason)));
+
+// -- helpers ----------------------------------------------------------------------------------
+// also quotes: gaming.tools item names and icon paths end up inside attributes
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const dist = (m) => m == null ? "" : m >= 1000 ? (m / 1000).toFixed(1) + " km" : m + " m";
+const pct = (c) => c >= 0.995 ? "100%" : c >= 0.1 ? Math.round(c * 100) + "%" : (c * 100).toFixed(1) + "%";
+const lvl = (h) => h > 2 ? "&uarr;" + h + " m" : h < -2 ? "&darr;" + (-h) + " m" : "same level";
+const cdn = (p) => p ? esc("https://cdn-hosted.gaming.tools/dune" + p) : "";
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many || one + "s"}`;
+const GROUP_COLORS = { "Spice": "#c98cf5", "Ore & crystals": "#6fb3ff", "Stone": "#b3a690", "Salvage": "#c8a165",
+  "Plants & sand": "#7fd18b", "Loot cages": "#ff6f91", "Uniques & schematics": "#ffd166", "Components": "#f4a261",
+  "Refined materials": "#9aa6ff", "Raw materials": "#d9b991" };
+const groupColor = (g) => GROUP_COLORS[g] || "#a3957d";
+const CHECK = `<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 8.5 3 3 7-7"/></svg>`;
+let order = [];
+const rank = (g) => order.indexOf(g) + 1 || 99;
+const byGroup = (rows, gi) => {
+  const m = new Map();
+  for (const r of rows) { const g = r[gi] || "Other"; if (!m.has(g)) m.set(g, []); m.get(g).push(r); }
+  return [...m.entries()].sort((a, b) => rank(a[0]) - rank(b[0]));
+};
+// render only what changed: the page updates every few seconds and must not disturb the reader
+const sigs = {};
+const swap = (id, html) => { if (sigs[id] === html) return false; sigs[id] = html; $(id).innerHTML = html; return true; };
+const text = (id, t) => { const el = $(id); if (el.textContent !== t) el.textContent = t; };
+const idle = (el) => document.activeElement !== el;
+
+// -- feedback and actions ---------------------------------------------------------------------
+let savedTimer = 0, lastSnap = null;
+// every change says whether the detector took it: nothing may fail silently
+const feedback = (ok, t) => {
+  const el = $("saved");
+  el.textContent = t;
+  el.classList.toggle("good", ok);
+  el.classList.toggle("bad", !ok);
+  clearTimeout(savedTimer);
+  if (ok) savedTimer = setTimeout(() => { el.textContent = ""; }, 2500);
+};
+const post = (action, value) =>
+  fetch(`/control?action=${action}${value ? `&value=${encodeURIComponent(value)}` : ""}`, { method: "POST" })
+    .then((r) => r.ok ? feedback(true, "Saved: the minimap updates within a few seconds")
+                      : feedback(false, `Not applied (HTTP ${r.status}). Reload this page (Ctrl+F5).`))
+    .catch(() => feedback(false, "Not applied: the detector is not running. Is the companion open?"));
+// a looted material has no companion markers: ticking it on the minimap is the way to search it
+const pick = (key) => post(key.startsWith("item:") ? "minimap_toggle" : "resource", key);
+
+$("lines").onchange = () => post("lines");
+$("res").onchange = (e) => post("resource", e.target.value);
+$("veh").onchange = (e) => post("vehicle", e.target.value);
+$("toggle").onchange = () => post("toggle");
+$("base").onclick = () => post("base");
+$("block").onclick = () => post("block");
+$("pveRow").onchange = (e) => post("pve_row", e.target.value);
+$("linesRow").onchange = (e) => post("lines_row", e.target.value);
+$("pvpYield").onchange = (e) => post("pvp_yield", e.target.value);
+$("pvpOnly").onchange = () => post("pvp_only");
+$("maxKm").onchange = (e) => post("max_km", e.target.value || "0");
+// generated buttons and tick boxes: one listener each, so re-rendering never loses a handler
+document.addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-pick],[data-go],[data-route],[data-farm]");
+  if (!b || b.disabled) return;
+  if (b.dataset.route) post("route_start", b.dataset.route);
+  else if (b.dataset.farm) post(b.dataset.farm);
+  else if (b.dataset.pick) pick(b.dataset.pick); else post("resource", b.dataset.go);
+});
+document.addEventListener("change", (ev) => {
+  const t = ev.target;
+  if (t.dataset.mm) post("minimap_toggle", t.dataset.mm);
+  else if (t.dataset.mmx) post("minimap_extra", t.dataset.mmx);
+  else if (t.dataset.gmember) post("sync_member", t.dataset.gmember);  // draw this guildmate on my minimap, or not
+});
+
+// -- problem report ---------------------------------------------------------------------------
+const problemReport = (s) => [
+  `harvesting-dune problem report (${new Date().toISOString()})`,
+  `version ${s.about ? s.about.version : "?"} · Python ${s.about ? s.about.python : "?"} · ${s.about ? s.about.platform : "?"} · page ${s.pageVersion || "?"}`,
+  `map ${s.worldName || "none"} · search ${s.resource} · vehicle ${s.vehicle} · connected ${s.connected}`,
+  `${s.problems.count} problem${s.problems.count === 1 ? "" : "s"} since start; the last ${s.problems.items.length}:`,
+  ...s.problems.items.map((p) => `\n[${new Date(p.t * 1000).toISOString()}] ${p.level} ${p.where}\n${p.detail || p.message}`),
+  "\nMore in data\\logs\\errors.log in the harvesting-dune folder.",
+].join("\n");
+$("copyReport").onclick = async () => {
+  const t = lastSnap ? problemReport(lastSnap) : "";
+  try { await navigator.clipboard.writeText(t); $("copied").textContent = "Copied."; }
+  catch (_) {  // no clipboard access: show the text to copy by hand
+    const ta = document.createElement("textarea"); ta.value = t; ta.rows = 8; ta.setAttribute("aria-label", "Problem report");
+    $("problems").appendChild(ta); ta.select(); $("copied").textContent = "Select all and copy the text below.";
+  }
+};
+
+// -- search -----------------------------------------------------------------------------------
+// fuzzy:start
+const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+const lev = (a, b) => {  // edit distance, a swap of two letters counts once
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) {
+    d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+  }
+  return d[a.length][b.length];
+};
+// How well what you typed matches an item name: the whole phrase inside the name scores highest, else
+// each typed word against its best name word (start of the word, or a close spelling).
+const fuzzy = (query, name) => {
+  const q = norm(query), n = norm(name);
+  if (!q) return 0;
+  if (n.includes(q)) return 1 + q.length / n.length;
+  const typed = q.split(" "), words = n.split(" ");
+  let sum = 0;
+  for (const t of typed) {
+    let best = 0;
+    for (const w of words) {
+      if (w.startsWith(t)) { best = 1; break; }
+      best = Math.max(best, 1 - Math.min(lev(t, w), lev(t, w.slice(0, t.length))) / Math.max(3, t.length));
+    }
+    sum += best;
+  }
+  return sum / typed.length;
+};
+const MATCH = 0.6;
+// fuzzy:end
+// other words players use for a search; the real name still wins a tie
+const ALIASES = {
+  downed_ships: ["ship", "crashed ship", "ship crash"], shipwrecks: ["ship", "wreck", "crashed shipwrecks", "great house parts"],
+  wrecks: ["vehicle wreck", "thopter wreck", "buggy wreck", "ornithopter wreck"], cages: ["loot cage", "rare cage", "container"],
+  cages_ultra: ["loot cage", "ultra cage"], spice: ["melange", "spice field"], spice_large: ["big spice field"],
+};
+const score = (q, e) => {
+  let best = fuzzy(q, e.name);
+  for (const a of e.aliases) best = Math.max(best, fuzzy(q, a) * 0.95);
+  return best;
+};
+let catalog = [], catalogSig = "", query = "";
+const openGroups = new Set();
+// everything you can search for, map resources and looted items alike
+const refreshCatalog = (s) => {
+  const sig = JSON.stringify([s.resources, s.itemGroups]);
+  if (sig === catalogSig) return;
+  catalogSig = sig;
+  catalog = [];
+  for (const [k, n, g] of s.resources || []) catalog.push({ key: k, name: n, group: g || "Other", kind: "res", aliases: ALIASES[k] || [] });
+  for (const g of s.itemGroups || []) for (const [k, n, c, ships, chance] of g.items)
+    catalog.push({ key: k, name: n, group: g.group, kind: "item", here: c, ships, chance, aliases: [] });
+};
+const whereText = (e) => e.kind !== "item" ? "" : e.here ? plural(e.here, "place") + " here" : e.ships ? "downed ships" : "not on this map";
+const pickHtml = (e, s, withGroup) => {
+  const on = e.key === s.resource;
+  // drops only on other maps: dimmed, but still pickable, so its card shows where it drops
+  const far = e.kind === "item" && !e.here && !e.ships && !on;
+  const meta = [withGroup ? e.group : "", whereText(e)].filter(Boolean).join(" · ");
+  const tags = (e.ships && e.here ? `<span class="tag">ships</span>` : "") + (e.chance ? `<span class="tag chance">chance</span>` : "");
+  const title = e.kind !== "item" ? "" : far ? "Not on this map. Pick it to see where it drops" : e.here && e.ships ? `${e.here} places drop it on this map, and downed ships` : e.here ? `${e.here} places drop it on this map` : "Drops from downed ships";
+  return `<button type="button" class="pick${far ? " far" : ""}" data-pick="${esc(e.key)}" aria-pressed="${on}"${title ? ` title="${esc(title)}"` : ""}>`
+    + CHECK + `<span class="pick-name">${esc(e.name)}</span><span class="pick-meta">${esc(meta)}${tags}</span></button>`;
+};
+const matchesHtml = (s, q) => {
+  const found = catalog.map((e) => [score(q, e), e]).filter(([sc]) => sc >= MATCH).sort((a, b) => b[0] - a[0]).slice(0, 12);
+  if (!found.length) return `<p class="empty">No match for &ldquo;${esc(q)}&rdquo;. Try another spelling, or clear the search to browse by class.</p>`;
+  return `<div class="picks" role="group" aria-label="Matches">${found.map(([, e]) => pickHtml(e, s, true)).join("")}</div>`;
+};
+const browseHtml = (s) => {
+  const groups = new Map();
+  for (const e of catalog) { if (!groups.has(e.group)) groups.set(e.group, []); groups.get(e.group).push(e); }
+  return [...groups.entries()].sort((a, b) => rank(a[0]) - rank(b[0])).map(([g, es]) => {
+    const items = es[0].kind === "item";
+    const here = es.filter((e) => e.here || e.ships).length;
+    const target = es.find((e) => e.key === s.resource);
+    return `<details class="grp" data-grp="${esc(g)}"${openGroups.has(g) ? " open" : ""}><summary><span class="dot" style="--c:${groupColor(g)}"></span>${esc(g)}`
+      + `<span class="count">${target ? CHECK + " " + esc(target.name) + " · " : ""}${items ? `${here} of ${es.length} drop on this map` : es.length}</span><span class="chev" aria-hidden="true"></span></summary>`
+      + `<div class="picks">${es.map((e) => pickHtml(e, s)).join("")}</div></details>`;
+  }).join("");
+};
+const renderSearch = (s) => {
+  const q = query.trim();
+  const building = !s.itemIndex || !s.itemIndex.items ? `<p class="empty">Building the material index from gaming.tools (about 30 s, once a week)&hellip; Map resources can be searched now.</p>` : "";
+  swap("matches", q ? matchesHtml(s, q) : "");
+  swap("browse", q ? "" : building + browseHtml(s));
+};
+$("q").oninput = (e) => { query = e.target.value; if (lastSnap) renderSearch(lastSnap); };
+$("q").onkeydown = (e) => {
+  if (e.key === "Enter") { const b = $("matches").querySelector(".pick:not(:disabled)"); if (b) { e.preventDefault(); pick(b.dataset.pick); } }
+  else if (e.key === "Escape") { if (query) { e.preventDefault(); query = $("q").value = ""; renderSearch(lastSnap); } }
+  else if (e.key === "ArrowDown") { const b = $("matches").querySelector(".pick:not(:disabled)"); if (b) { e.preventDefault(); b.focus(); } }
+};
+// remember which classes you opened while browsing (toggle does not bubble: capture it)
+document.addEventListener("toggle", (ev) => {
+  const d = ev.target;
+  if (d.classList && d.classList.contains("grp")) { d.open ? openGroups.add(d.dataset.grp) : openGroups.delete(d.dataset.grp); }
+}, true);
+
+// -- current target ---------------------------------------------------------------------------
+const renderTarget = (s) => {
+  const e = catalog.find((x) => x.key === s.resource);
+  const info = s.itemInfo;
+  text("tName", e ? e.name : info ? info.name : s.resource || "–");
+  const farmHere = (s.farmRoutes || []).some((r) => r.here);  // the item data may lag: a farm route here still drops it
+  text("tMeta", [e ? e.group : info ? info.group : "", e ? (farmHere && !e.here ? "farm route here" : whereText(e)) : ""].filter(Boolean).join(" · "));
+  const best = (s.areas || []).find((a) => a.feasible);
+  const tone = !s.enabled ? "" : best ? "good" : "warn";
+  const rows = [["Status", `<span class="chip ${tone}"><span class="dot"></span><span>${esc(s.status)}</span></span>`]];
+  if (best) rows.push(["Best place", `${esc(dist(best.distance_m))} &middot; ${esc(best.detail)}`]);
+  if (s.hotspot) rows.push(["Hotspot", `${esc(s.hotspot.cell)} (${esc(s.hotspot.zone)}, ${s.hotspot.nodes} nodes)`]);
+  swap("tFacts", rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join(""));
+  text("vehNote", s.vehicleOverride ? `detected ${s.vehicle}` : `planning ${s.planVehicle}`);
+  if (idle($("veh"))) $("veh").value = s.vehicleOverride || "auto";
+  $("toggle").checked = !!s.enabled;
+  // quick switch: map resources plus the items that drop on this map
+  const sel = $("res");
+  const itemRows = (s.itemGroups || []).flatMap((g) => g.items.filter((i) => i[2] > 0 || i[3] || i[0] === s.resource).map((i) => [i[0], i[1], g.group]));
+  const html = byGroup([...(s.resources || []), ...itemRows], 2).map(([g, rows]) =>
+    `<optgroup label="${esc(g)}">${rows.map(([k, n]) => `<option value="${esc(k)}">${esc(n)}</option>`).join("")}</optgroup>`).join("");
+  if (sigs.res !== html) { sigs.res = html; sel.innerHTML = html; }
+  if (idle(sel)) sel.value = s.resource;
+  // where a looted item drops
+  swap("itemInfo", !info ? "" : (info.sources.length
+      ? `<div class="table-wrap"><table class="data"><thead><tr><th>Drops from</th><th class="num">Places</th><th class="num">Best chance</th><th class="num">Amount</th><th class="num">Avg each</th><th class="num">Nearest</th></tr></thead><tbody>`
+        + [["ships", "Downed ships (random, temporary)"], ["wreck", "Fixed shipwrecks (always there)"], ["fixed", "Containers &amp; corpses"]].map(([w, title]) => {
+            const ks = info.sources.filter((k) => (k.where || "fixed") === w);
+            if (!ks.length) return "";
+            return `<tr class="sec-row"><td colspan="6">${title}</td></tr>` + ks.map((k) => `<tr><td>${esc(k.name)}</td>`
+              + `<td class="num">${w === "ships" ? (k.count ? k.count + " seen" : "none seen yet") : k.count}</td><td class="num">${pct(k.bestChance)}</td>`
+              + `<td class="num">&times;${k.min === k.max ? k.min : k.min + "&ndash;" + k.max}</td><td class="num">${k.expected != null ? k.expected : ""}</td><td class="num">${dist(k.nearestM)}</td></tr>`).join("");
+          }).join("")
+        + `</tbody></table></div>`
+      : `<p class="note">${farmHere ? "Drops in chests here: see Farm route." : "It does not drop anywhere on this map."}</p>`)
+    + (info.chance ? `<p class="note" style="margin-top:var(--s2);color:var(--warn)">${info.via === "schematic" ? "Chance find (its schematic drops)." : "Chance find."} Gold rings = likely places.</p>` : "")
+    + ((info.elsewhere || []).length ? `<div class="table-wrap" style="margin-top:var(--s3)"><table class="data"><thead><tr><th>Other regions</th><th>Source</th><th class="num">Best chance</th><th class="num">Places</th></tr></thead><tbody>`
+      + info.elsewhere.map((x) => `<tr><td>${esc(x.region)}</td><td>${esc(x.source)}</td><td class="num">${pct(x.bestChance)}</td><td class="num">${x.places}</td></tr>`).join("") + `</tbody></table></div>` : "")
+    + ((info.reward || []).length ? `<p class="note" style="margin-top:var(--s2)">Contract reward: ${info.reward.map(esc).join(" &middot; ")}</p>` : "")
+    + (info.vendors.length ? `<p class="note" style="margin-top:var(--s2)">${info.via === "schematic" ? "Schematic sold by" : "Sold by"}: ${info.vendors.map((v) => `${esc(v.name)} (${v.price.toLocaleString()} Solari${v.stock ? ", " + v.stock + " in stock" : ""})`).join(" &middot; ")}</p>` : ""));
+};
+
+// farm route: the item's routes in one table; the route you are on, its line and its buttons above it
+const placeName = ([id, name, mission]) => WORLDS[id] || name || (mission ? "instance (Landsraad mission)" : "instance");
+const renderFarm = (s) => {
+  const rows = s.farmRoutes || [], f = s.farm;
+  const head = !f ? "" : `<p><b>${esc(f.line)}</b>${f.notice ? `<br><span class="note">${esc(f.notice)}</span>` : ""}</p>`
+    + `<div class="actions"><button type="button" data-farm="route_skip" title="Ctrl+Alt+N">Next stop</button>`
+    + `<button type="button" data-farm="route_repeat" aria-pressed="${!!f.repeat}">Repeat this site</button>`
+    + `<button type="button" data-farm="route_stop">Stop route</button></div>`;
+  const table = !rows.length ? "" : `<div class="table-wrap"><table class="data"><thead><tr><th>Farm route</th><th>World</th><th class="num">Sites</th>`
+    + `<th class="num">Chests</th><th class="num">Reset</th><th>Confidence</th><th class="num">From you</th><th></th></tr></thead><tbody>`
+    + rows.map((r) => `<tr${f && f.id === r.id ? ` class="sel"` : ""}><td>${esc(r.name)}${r.note ? ` <span class="note">${esc(r.note)}</span>` : ""}</td>`
+      + `<td>${esc((r.worlds || []).map(placeName).join(", "))}</td><td class="num">${r.sites}</td>`
+      + `<td class="num">${r.chests ?? "weekly"}</td>`
+      + `<td class="num">${r.resetMin == null ? "unknown" : r.resetMin + " min"}</td><td>${esc(r.confidence)}</td><td class="num">${dist(r.distanceM)}</td>`
+      + `<td>${f && f.id === r.id ? "" : `<button type="button" data-route="${esc(r.id)}">Start</button>`}</td></tr>`).join("")
+    + `</tbody></table></div>`;
+  swap("farm", head + table);
+};
+
+// -- sections ---------------------------------------------------------------------------------
+const renderMinimap = (s) => {
+  const mm = s.minimap;
+  $("lines").checked = mm.lines;
+  if (idle($("maxKm"))) $("maxKm").value = s.maxKm ?? 0;
+  text("linesNote", !mm.lines ? "Off: all ticked resources show, no lines."
+    : mm.linesActive ? "One resource at a time. Cyan = best, thin = next best."
+    : `Tick exactly one resource to get lines (${mm.visibleCount} shown).`);
+  swap("mm", byGroup(mm.items, 3).map(([g, rows]) =>
+    `<div class="mm-grp"><div class="mm-head"><span class="dot" style="--c:${groupColor(g)}"></span>${esc(g)}</div><div class="ticks">`
+    + rows.map(([k, n, shown]) => `<label class="tick"><input type="checkbox" data-mm="${esc(k)}"${shown ? " checked" : ""}> ${esc(n)}</label>`).join("")
+    + `</div></div>`).join(""));
+  swap("mmx", (mm.extras || []).map(([k, n, shown]) => `<label class="tick"><input type="checkbox" data-mmx="${esc(k)}"${shown ? " checked" : ""}> ${esc(n)}</label>`).join(""));
+  text("sum-mm", `${!mm.lines ? "lines off" : mm.linesActive ? "lines on" : "lines waiting"} · ${mm.visibleCount} of ${mm.items.length} resources shown · ${s.maxKm ? `max ${s.maxKm} km` : "no distance limit"}`);
+};
+const renderDesert = (s) => {
+  const z = s.zones;
+  if (!z) return;
+  if (idle($("pveRow"))) $("pveRow").value = z.lastPveRow;
+  if (idle($("linesRow"))) $("linesRow").value = z.linesFromRow || "A";
+  if (idle($("pvpYield"))) $("pvpYield").value = z.pvpYield;
+  $("pvpOnly").checked = z.pvpOnly;
+  const here = z.here || "not in the Deep Desert";
+  text("zoneHere", here);
+  text("sum-dd", `${here}${z.pvpOnly ? " · PvP only" : ""} · PvE rows A to ${z.lastPveRow} · lines from row ${z.linesFromRow || "A"} · PvP yield ×${z.pvpYield}`);
+};
+const renderShips = (s) => {
+  const ships = s.ships || [];
+  swap("shipList", (ships.length
+    ? `<ul>${ships.map((x) => `<li>${dist(x.distanceM)} &middot; ${x.ageMin} min ago &middot; ${x.gone ? "gone (a worm took it)" : x.emptied ? "emptied" : x.loaded ? "in view" : "remembered"}${x.zone ? " &middot; " + esc(x.zone) : ""}</li>`).join("")}</ul>`
+    : `<p class="note">None seen by you yet.</p>`)
+    + (s.shipsReported ? `<p class="note">${plural(s.shipsReported, "more")} reported by other players (not confirmed).</p>` : ""));
+  const wrecks = (s.shipwrecks || []).slice().sort((a, b) => (a.distanceM ?? 1e12) - (b.distanceM ?? 1e12));
+  swap("wreckList", wrecks.length
+    ? `<ul>${wrecks.slice(0, 6).map((w) => `<li>${esc(w.name)} &middot; ${dist(w.distanceM)}${w.zone ? " &middot; " + esc(w.zone) : ""}</li>`).join("")}</ul>`
+      + (wrecks.length > 6 ? `<p class="note">+${wrecks.length - 6} more on this map</p>` : "")
+    : `<p class="note">Read from the companion's map once it is open.</p>`);
+  document.querySelectorAll("[data-go]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.go === s.resource)));
+  text("sum-ships", `${plural(ships.length, "downed ship")} seen · ${s.shipsReported || 0} reported · ${plural(wrecks.length, "fixed shipwreck")}`);
+};
+const dropRow = (d) => `<tr class="${d.special ? "special" : ""}">`
+  + `<td><img src="${cdn(d.icon)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'"></td>`
+  + `<td class="r-${esc(d.rarity)}">${esc(d.name)}${d.special && !d.schematic ? " &#9733;" : ""}${d.schematic ? " (schematic)" : ""}</td>`
+  + `<td class="num"><span class="bar" style="width:${Math.max(2, Math.round(d.chance * 60))}px"></span>${pct(d.chance)}</td>`
+  + `<td class="num">&times;${d.min === d.max ? d.min : d.min + "&ndash;" + d.max}</td></tr>`;
+const cageCard = (c) => `<div class="cage${c.kind === "Ultra Rare" ? " ultra" : ""}">`
+  + `<div class="cage-head"><span class="kind">${esc(c.kind)} cage</span><span>${c.distanceM} m away</span><span class="note">${lvl(c.heightM)}</span></div>`
+  + `<div class="note">` + (c.known
+      ? `${c.drops.length + c.moreDrops} possible items &middot; best rarity ${esc(c.bestRarity || "?")}`
+        + (c.specialChance ? ` &middot; <b style="color:var(--warn)">${pct(c.specialChance)} chance of a unique/schematic</b>` : "")
+      : "Not in the gaming.tools database for this location.") + `</div>`
+  + (c.known ? `<table class="data"><tbody>${c.drops.map(dropRow).join("")}`
+      + (c.moreDrops ? `<tr><td></td><td colspan="3" class="note">+${c.moreDrops} less likely items</td></tr>` : "")
+      + `</tbody></table>` : "")
+  + `</div>`;
+const renderLoot = (s) => {
+  const building = !s.lootIndex || !s.lootIndex.cages;
+  swap("cages", building
+    ? `<p class="note">Building the loot index from gaming.tools (about 30 s, once a week)&hellip;</p>`
+    : s.loot.length ? s.loot.map(cageCard).join("") : `<p class="note">No rare or ultra-rare cages loaded around you right now.</p>`);
+  text("sum-loot", building ? "building the loot index" : s.loot.length ? `${plural(s.loot.length, "cage")} near you` : "none near you");
+};
+const renderBlows = (s) => {
+  const blows = s.blows || [];
+  swap("blows", blows.length
+    ? `<ul style="margin:0;padding-left:18px">${blows.map((b) => `<li>${b.ageMin <= 20 ? `<span class="fresh">fresh</span> ` : ""}${esc(b.size)} field · ${b.ageMin} min ago` + (b.distanceM != null ? ` · ${dist(b.distanceM)} away` : "") + `</li>`).join("")}</ul>`
+    : `<p class="note">None yet.</p>`);
+  const fresh = blows.filter((b) => b.ageMin <= 20).length;
+  text("sum-blows", blows.length ? `${plural(blows.length, "blow")} this cycle${fresh ? ` · ${fresh} fresh` : ""}` : "none this cycle");
+};
+const renderDiag = (s) => {
+  const facts = {
+    Status: s.status,
+    Hotspot: s.hotspot ? `${s.hotspot.cell} (${s.hotspot.zone}, ${s.hotspot.nodes} nodes within ~500 m)` : "Deep Desert only",
+    Vehicle: `${s.vehicle} (planning for ${s.planVehicle}${s.vehicleOverride ? ", manual" : ", auto"})`,
+    Activity: s.characterState || s.activity || "–",
+    "Tracked actors": s.tracked,
+    "Scan rows": `${s.scanRows}${s.scanStatus ? ` (HTTP ${s.scanStatus})` : ""}`,
+    "Stale entries hidden": s.stale,
+    "Mined by you (tracked)": s.mined && s.mined.count ? `${s.mined.count} nodes, hidden until they respawn; next back in ~${Math.max(0, s.mined.nextBackMin)} min` : "none right now",
+    "Detection range": s.detectionRangeM ? `${s.detectionRangeM} m` : "learning…",
+    "Ranking time": s.scoreMs == null ? "–" : `${s.scoreMs} ms`,
+  };
+  swap("facts", Object.entries(facts).map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join(""));
+  let n = 0;
+  swap("rows", s.areas.length
+    ? s.areas.map((a) => `<tr class="${a.feasible ? "" : "no"}"><td class="rank">${a.feasible ? ++n : "–"}</td><td class="num">${a.distance_m ?? ""} m</td><td>${esc(a.feasible ? a.detail : a.reasons.join("; "))}</td></tr>`).join("")
+    : `<tr class="no"><td colspan="3">No areas for this resource here yet.</td></tr>`);
+  text("about", s.about ? `harvesting-dune ${s.about.version} · Python ${s.about.python} · ${s.about.platform} · page ${s.pageVersion || "?"}` : "");
+  text("sum-diag", `${plural(s.tracked, "actor")} tracked · ${plural(s.areas.length, "area")} ranked · ${s.scoreMs == null ? "no ranking yet" : `ranked in ${s.scoreMs} ms`}`);
+};
+const renderProblems = (s) => {
+  const probs = s.problems || { count: 0, items: [] };
+  $("problems").hidden = !probs.count;
+  if (!probs.count) return;
+  text("problemsTitle", probs.count === 1 ? "harvesting-dune hit a problem" : `harvesting-dune hit ${probs.count} problems`);
+  swap("problemList", probs.items.slice(-3).reverse().map((p) => `<li>${new Date(p.t * 1000).toLocaleTimeString()} &middot; ${esc(p.message)}</li>`).join(""));
+};
+
+// -- guild ------------------------------------------------------------------------------------
+// The key travels once, in the body of POST /sync/key: never in a URL, in storage or on the page.
+// All that is shown comes from s.peers; the browser never talks to the guild server.
+const WORLDS = { deepdesert_1: "Deep Desert", survival_1: "Hagga Basin" };
+const SYNC_ERRORS = { unreachable: "server unreachable, retrying", tls: "server identity check failed, retrying",
+  "rate-limited": "server busy, retrying later", server: "server error, retrying" };
+const LIFETIME_S = { spice: 2700, blow: 2700, ship: 1800 };  // for a detector that sends no lifetimeS (docs/SYNC-PROTOCOL.md "Lifetimes")
+const ago = (s) => s < 60 ? `${Math.round(s)} s ago` : s < 3600 ? `${Math.round(s / 60)} min ago` : `${(s / 3600).toFixed(1)} h ago`;
+// coarse values in the lists: a row that changed every second would re-render under the reader's mouse
+const seen = (s) => s < 120 ? "now" : ago(s);
+// the server's presence state of a guildmate (an older detector sends none: its coarse age then)
+const presence = (state, age) => {
+  switch (state) {
+    case "you": return "you";
+    case "online": return "online";
+    case "in_menu": return "in menu";
+    case "late": return `last seen ${ago(age)}`;
+    case "offline": return `left ${ago(age)}`;
+    default: return age == null ? "" : seen(age);
+  }
+};
+const playing = (m) => !m.state || m.state === "online" || m.state === "in_menu";
+const near = (m) => m == null ? "" : m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m / 100) * 100} m`;
+const typeName = (t) => String(t || "").replace(/(ore|rock|crystal|mass)$/, " $1").replace(/^./, (c) => c.toUpperCase());
+const findText = (f) => {
+  switch (f.cls) {
+    case "spice": return `${f.size ? f.size + " " : ""}spice field${f.fill == null ? "" : ` · ${Math.round(f.fill * 100)}% full`}`;
+    case "blow": return `spice blow${f.size ? ` · ${f.size}` : ""}`;
+    case "ship": return "downed ship";
+    case "mined": return `${typeName(f.type)} · mined out`;
+    case "stale": return `${typeName(f.type)} · gone`;
+    case "ore": return `${f.name || typeName(f.type)} · live`;
+    default: return `${f.cls} ${f.type}`;  // a class this page does not know yet is still listed
+  }
+};
+const ageText = (f) => {
+  const share = f.ageS / (f.lifetimeS || LIFETIME_S[f.cls] || LIFETIME_S.spice), mins = `${Math.round(f.ageS / 60)} min`;
+  return share <= 1 / 3 ? `<span class="fresh">fresh</span> · ${mins}` : share >= 2 / 3 ? `old · ${mins}` : mins;
+};
+const guildStatus = (p) => {
+  const err = SYNC_ERRORS[p.lastError];
+  switch (p.keyState) {
+    case "none": return "Enter your guild key";
+    case "invalid": return "key rejected: enter a new one";
+    case "expired": return "key expired: ask the admin to renew it";
+    case "unknown": return !p.enabled ? "paused" : err || "checking the key…";
+    default: {
+      const when = p.lastSyncAgeS == null ? "" : ` · synced ${ago(p.lastSyncAgeS)}`;
+      return !p.enabled ? `paused${when}` : p.connectedAs ? `connected as ${p.connectedAs}${when}` : `${err || "connected"}${when}`;
+    }
+  }
+};
+let keyEdit = false, keyNote = "";
+const keyFailed = (t) => { keyNote = t; text("gStatus", t); };
+const saveKey = () => {
+  const key = $("gkey").value.trim();  // a pasted key often brings spaces or a newline along
+  if (!key) return;
+  $("gkey").value = "";
+  text("gStatus", "saving…");
+  fetch("/sync/key", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key }) })
+    .then((r) => {
+      if (r.ok) { keyEdit = false; keyNote = ""; text("gStatus", "key saved, checking…"); }
+      else keyFailed(r.status === 400 ? "not a guild key: it has 45 characters and starts with gs1_" : `not saved (HTTP ${r.status}); reload this page (Ctrl+F5)`);
+    })
+    .catch(() => keyFailed("not saved: the detector is not running"));
+};
+$("gSave").onclick = saveKey;
+$("gkey").onkeydown = (e) => {
+  if (e.key === "Enter") { e.preventDefault(); saveKey(); }
+  else if (e.key === "Escape" && keyEdit) { e.preventDefault(); keyEdit = false; $("gkey").value = ""; if (lastSnap) renderGuild(lastSnap); }  // back to "key saved"
+};
+$("gkey").oninput = () => { if (keyNote) { keyNote = ""; if (lastSnap) renderGuild(lastSnap); } };
+$("gChange").onclick = () => { keyEdit = true; if (lastSnap) renderGuild(lastSnap); $("gkey").focus(); };
+$("gRemove").onclick = () => fetch("/sync/key", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
+  .then((r) => { if (!r.ok) keyFailed(`not removed (HTTP ${r.status})`); })
+  .catch(() => keyFailed("not removed: the detector is not running"));
+$("gPause").onchange = () => post("sync_pause");
+$("gPos").onchange = () => post("sync_positions");
+const renderGuild = (s) => {
+  const p = s.peers;
+  if (!p) return;  // an older detector has no guild sync
+  const showForm = !p.keySet || keyEdit;
+  $("gKeyForm").hidden = !showForm;
+  $("gKeySaved").hidden = showForm;
+  text("gStatus", keyNote || guildStatus(p));
+  $("gTrack").hidden = !p.needsTracking;
+  $("gPause").checked = !p.enabled;
+  $("gPos").checked = !!p.positions;
+  const members = p.members || [], finds = p.sightings || [];
+  swap("gMembers", members.length
+    ? `<div class="table-wrap"><table class="data"><thead><tr><th></th><th>Member</th><th>Where</th><th class="num">Dist</th><th>State</th></tr></thead><tbody>`
+      + members.map((m) => `<tr${m.state === "offline" ? ` class="no"` : ""}><td>${m.self ? "" : `<input type="checkbox" data-gmember="${m.characterId}"${m.shown ? " checked" : ""} title="Draw on my minimap">`}</td>`
+        + `<td>${esc(m.name)}${m.self ? ` <span class="note">(you)</span>` : ""}</td><td>${esc([WORLDS[m.worldId] || m.worldId, m.sector].filter(Boolean).join(" "))}</td>`
+        + `<td class="num">${m.self ? "" : near(m.distanceM)}</td><td class="nw">${presence(m.state, m.ageS)}</td></tr>`).join("") + `</tbody></table></div>`
+    : `<p class="note">${p.keySet ? "Nobody else is online." : "Needs a guild key."}</p>`);
+  swap("gSightings", finds.length
+    ? `<div class="table-wrap"><table class="data"><thead><tr><th>Find</th><th>Age</th><th>By</th><th class="num">Dist</th></tr></thead><tbody>`
+      + finds.map((f) => `<tr><td>${esc(findText(f))}</td><td class="nw">${ageText(f)}</td><td class="nw">${esc(f.observer || "?")}</td><td class="num">${dist(f.distanceM)}</td></tr>`).join("") + `</tbody></table></div>`
+    : `<p class="note">Nothing shared on this map yet.</p>`);
+  const online = members.filter((m) => !m.self && playing(m)).length;
+  text("sum-guild", !p.keySet ? "off: no key" : p.keyState === "invalid" ? "key rejected" : p.keyState === "expired" ? "key expired" : !p.enabled ? `paused · ${online} online`
+    : `${online} online · ${finds.length} shared · ${p.lastSyncAgeS == null ? "not synced yet" : `synced ${ago(p.lastSyncAgeS)}`}`);
+};
+
+// -- characters -------------------------------------------------------------------------------
+// The list comes with every snapshot; one character's full profile is fetched from /character when
+// picked. While this section is open the detector fetches the guild's profiles (once a minute).
+const NOT_YET = `<p class="note">not reported yet</p>`;
+let charSel = null, charDetail = null, charKey = "", charQuery = "", charPinged = 0;
+const quiet = (action, value) => fetch(`/control?action=${action}&value=${encodeURIComponent(value)}`, { method: "POST" }).catch(() => {});
+const charsOpen = () => !!$("sec-chars").open;
+$("cShare").onchange = () => post("share_character");
+$("cSession").onchange = () => post("share_session");
+$("sec-chars").addEventListener("toggle", () => { if (charsOpen()) { charPinged = Date.now(); quiet("guild_view", "characters"); } });
+$("sec-guild").addEventListener("toggle", () => { if ($("sec-guild").open) quiet("guild_view", "guild"); });
+document.addEventListener("click", (ev) => {
+  const tr = ev.target.closest && ev.target.closest("tr[data-char]");
+  if (!tr) return;
+  charSel = Number(tr.dataset.char);
+  charKey = "";
+  if (lastSnap) renderChars(lastSnap);
+});
+const worldName = (w) => WORLDS[w] || w || "";
+const readable = (id) => String(id).replace(/[_.]+/g, " ").trim();
+const dataTable = (head, rows) => `<div class="table-wrap"><table class="data"><thead><tr>${head}</tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
+// the companion's skill tags: "Skills.Ability.CablePull" -> group "Ability", name "Cable Pull"
+const tagParts = (tag) => String(tag).split(/[./]/);
+const tagName = (tag) => tagParts(tag).pop().replace(/_/g, " ").replace(/([a-z])([A-Z0-9])/g, "$1 $2");
+const tagGroup = (tag) => { const p = tagParts(tag); return p.length > 1 ? p[p.length - 2] : ""; };
+const skillsHtml = (k) => {
+  if (!k) return NOT_YET;
+  const groups = new Map();
+  k.skills.forEach(([tag, lv]) => groups.set(tagGroup(tag), [...(groups.get(tagGroup(tag)) || []), [tagName(tag), lv]]));
+  const rows = [...groups].flatMap(([g, list]) => [`<tr class="sec-row"><td colspan="2">${esc(g || "Other")}</td></tr>`,
+    ...list.map(([n, lv]) => `<tr><td>${esc(n)}</td><td class="num">${esc(lv)}</td></tr>`)]);
+  const names = (list) => list.length ? list.map((t) => esc(tagName(t))).join(", ") : "none";
+  return (rows.length ? dataTable(`<th>Skill</th><th class="num">Level</th>`, rows) : `<p class="note">no points spent</p>`)
+    + `<p class="small">Abilities: ${names(k.abilities)}<br>Techniques: ${names(k.techniques)}${k.gameMode ? `<br>Mode: ${esc(k.gameMode)}` : ""}</p>`;
+};
+const statsHtml = (groups) => !groups ? NOT_YET : !groups.length ? `<p class="note">none</p>`
+  : dataTable(`<th>Stat</th><th class="num">Value</th>`, groups.flatMap((g) => [`<tr class="sec-row"><td colspan="2">${esc(g.name)}</td></tr>`,
+    ...g.entries.map(([n, val]) => `<tr><td>${esc(n)}</td><td class="num">${esc(val)}</td></tr>`)]));
+const recipesHtml = () => {
+  const r = charDetail && charDetail.profile && charDetail.profile.recipes;
+  if (!r) return NOT_YET;
+  const names = charDetail.recipeNames || {};
+  const q = charQuery.trim();
+  const rows = r.map(([id, grade]) => ({ name: names[id] || readable(id), grade }))
+    .map((e) => [q ? fuzzy(q, e.name) : 1, e]).filter(([sc]) => sc >= MATCH).sort((a, b) => b[0] - a[0] || a[1].name.localeCompare(b[1].name));
+  return rows.length ? dataTable(`<th>Schematic</th><th class="num">Grade</th>`, rows.map(([, e]) => `<tr><td>${esc(e.name)}</td><td class="num">${esc(e.grade ?? "")}</td></tr>`))
+    : `<p class="note">${r.length ? "No match." : "none known"}</p>`;
+};
+const landsraadHtml = (l) => !l ? NOT_YET
+  : dataTable(`<th>House</th><th class="num">Progress</th><th class="num">Rewards</th>`, l.houses.map((h) => `<tr><td>${esc(readable(h.house))}</td>`
+    + `<td class="num">${esc(h.progress ?? "?")} / ${esc(h.max ?? "?")}</td><td class="num">${esc(h.earned)} of ${esc(h.rewards)}</td></tr>`))
+    + (l.term ? `<p class="small note">${esc(l.term)}</p>` : "");
+const achievementsHtml = (a) => !a ? NOT_YET
+  : `<p>${a.completed.length} completed of ${esc(a.seen)} seen</p>`
+    + (a.progress.length ? dataTable(`<th>In progress</th><th class="num">Done</th>`, a.progress.map(([id, p]) => `<tr><td>${esc(readable(id))}</td><td class="num">${pct(Math.min(p, 1))}</td></tr>`)) : "")
+    + (a.completed.length ? `<p class="small note">${a.completed.map((id) => esc(readable(id))).join(", ")}</p>` : "");
+const sessionHtml = (x, shared) => !shared ? `<p class="note">not shared</p>` : !x ? NOT_YET
+  : `<dl class="kv"><dt>XP</dt><dd>${esc(x.characterXp ?? "?")}</dd><dt>Dungeon runs</dt><dd>${esc(x.dungeonRuns ?? "?")}</dd>`
+    + `<dt>Dailies</dt><dd>${x.dailies.length ? x.dailies.map(esc).join(", ") : "none"}</dd></dl>`
+    + (x.specializationXp.length ? dataTable(`<th>Specialization</th><th class="num">XP</th>`, x.specializationXp.map(([n, a]) => `<tr><td>${esc(n)}</td><td class="num">${esc(a)}</td></tr>`)) : "")
+    + (x.loot.length ? dataTable(`<th>Picked up</th><th class="num">Amount</th>`, x.loot.map(([n, a]) => `<tr><td>${esc(n)}</td><td class="num">${esc(a)}</td></tr>`)) : "");
+const detailHtml = (d, s) => {
+  if (!d) return `<p class="note">Pick a character.</p>`;
+  const p = d.profile;
+  if (!p) return `<h2>${esc(d.name)}</h2><p class="note">${d.self ? "You do not share your character." : "Not shared."}</p>`;
+  const st = p.status || {};
+  const meta = [worldName(st.worldName || st.worldId), st.activity, st.inGame === false ? "not in a game" : "",
+    d.self ? "what the guild sees of you" : d.ageS != null ? `profile ${ago(d.ageS)}` : ""].filter(Boolean).join(" · ");
+  const shared = d.self ? s.characters.shareSession : !!p.session;
+  return `<h2>${esc(d.name)}</h2><p class="meta">${esc(meta)}</p><div class="cblocks">`
+    + `<div><strong>Skills</strong>${skillsHtml(p.skills)}</div>`
+    + `<div><strong>Schematics</strong><input type="search" id="cRecipeQ" autocomplete="off" spellcheck="false" placeholder="Search schematics" aria-label="Search schematics"><div id="cRecipes"></div></div>`
+    + `<div><strong>Stats</strong>${statsHtml(p.stats)}</div>`
+    + `<div><strong>Landsraad</strong>${landsraadHtml(p.landsraad)}</div>`
+    + `<div><strong>Achievements</strong>${achievementsHtml(p.achievements)}</div>`
+    + `<div><strong>This session</strong>${sessionHtml(p.session, shared)}</div></div>`;
+};
+const renderCharDetail = (s) => {
+  if (swap("cDetail", detailHtml(charDetail, s)) && $("cRecipeQ")) {
+    $("cRecipeQ").value = charQuery;
+    $("cRecipeQ").oninput = (e) => { charQuery = e.target.value; swap("cRecipes", recipesHtml()); };
+    sigs.cRecipes = null;  // a new element: its old signature no longer applies
+  }
+  if ($("cRecipes")) swap("cRecipes", recipesHtml());
+};
+const loadChar = (id, key, s) => {
+  charKey = key;
+  fetch(`/character?id=${id}`).then((r) => r.ok ? r.json() : null)
+    .then((d) => { if (charSel === id) { charDetail = d; renderCharDetail(s); } })
+    .catch(() => {});
+};
+const renderChars = (s) => {
+  const c = s.characters;
+  if (!c) return;  // an older detector has no characters
+  $("cShare").checked = !!c.share;
+  $("cSession").checked = !!c.shareSession;
+  $("cSession").disabled = !c.share;
+  const rows = c.rows || [];
+  if (!rows.some((r) => r.id === charSel)) { charSel = rows.length ? rows[0].id : null; charDetail = null; charKey = ""; }
+  swap("cRows", rows.length
+    ? dataTable(`<th>Character</th><th>World</th><th>Activity</th><th>State</th><th>Profile</th>`, rows.map((r, i) =>
+      (r.player && (!i || rows[i - 1].player !== r.player) ? `<tr class="sec-row"><td colspan="5">${esc(r.player)}</td></tr>` : "")
+      + `<tr data-char="${r.id}"${r.id === charSel ? ` class="sel"` : r.state === "offline" ? ` class="no"` : ""}>`
+      + `<td>${esc(r.name)}${r.self ? ` <span class="note">(you)</span>` : ""}</td><td>${esc(worldName(r.world))}</td><td>${esc(r.activity || "")}</td>`
+      + `<td class="nw">${presence(r.state, r.seenS)}</td><td class="nw">${r.profileAgeS == null ? (r.self && !c.share ? "not shared" : "none yet") : seen(r.profileAgeS)}</td></tr>`))
+    : `<p class="note">${s.peers && s.peers.keySet ? "No characters yet." : "Needs a guild key."}</p>`);
+  const sel = rows.find((r) => r.id === charSel);
+  const key = sel ? `${sel.id}:${sel.rev}:${c.share}:${c.shareSession}` : "";
+  if (sel && charsOpen() && key !== charKey) loadChar(sel.id, key, s);
+  renderCharDetail(s);
+  if (charsOpen() && Date.now() - charPinged > 60000) { charPinged = Date.now(); quiet("guild_view", "characters"); }
+  const others = rows.filter((r) => !r.self).length;
+  text("sum-chars", `${plural(others, "guildmate")} · ${c.share ? "sharing your character" : "not sharing your character"}`);
+};
+
+// -- gate: no accepted key, so the page shows only the key field --------------------------------
+let gateNote = "";
+const gateSay = (t) => { gateNote = t; text("gateWhy", t); };
+const saveGateKey = () => {
+  const key = $("gateKey").value.trim();
+  if (!key) return;
+  $("gateKey").value = "";
+  gateSay("saving…");
+  fetch("/sync/key", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key }) })
+    .then((r) => gateSay(r.ok ? "" : r.status === 400 ? "not a guild key: it has 45 characters and starts with gs1_" : `not saved (HTTP ${r.status})`))
+    .catch(() => gateSay("not saved: the detector is not running"));
+};
+$("gateSave").onclick = saveGateKey;
+$("gateKey").onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); saveGateKey(); } };
+$("gateKey").oninput = () => { gateNote = ""; };
+const renderGate = (s) => {
+  const closed = !!s.gate && !s.gate.open;  // an older detector has no gate
+  $("gate").hidden = !closed;
+  $("board").hidden = closed;
+  $("sec-chars").hidden = closed;
+  if (closed) { $("problems").hidden = true; text("gateWhy", gateNote || s.gate.text || ""); }
+  return closed;
+};
+
+const markWideTables = () => document.querySelectorAll(".table-wrap").forEach((w) => w.classList.toggle("more", w.scrollWidth > w.clientWidth + 1));
+window.addEventListener("resize", markWideTables);
+function render(s) {
+  lastSnap = s;
+  // a tab opened before an update runs old code: reload to the page the detector now serves
+  if (s.pageVersion && s.pageVersion !== PAGE_VERSION && PAGE_VERSION.indexOf("%") < 0) { location.reload(); return; }
+  $("connWrap").classList.toggle("on", s.connected);
+  text("conn", s.connected ? `live · ${s.worldName || "no map"}` : "waiting for companion");
+  if (renderGate(s)) return;
+  order = s.groupOrder || [];
+  refreshCatalog(s);
+  renderProblems(s);
+  renderSearch(s);
+  renderTarget(s);
+  renderFarm(s);
+  renderMinimap(s);
+  renderDesert(s);
+  renderShips(s);
+  renderLoot(s);
+  renderBlows(s);
+  renderDiag(s);
+  renderGuild(s);
+  renderChars(s);
+  markWideTables();
+}
+
+// sections stay the way you left them
+const OPEN_KEY = "harvesting-dune.open";
+let openSecs = new Set();
+try { openSecs = new Set(JSON.parse(localStorage.getItem(OPEN_KEY) || "[]")); } catch (_) {}
+document.querySelectorAll("details.sec").forEach((d) => {
+  d.open = openSecs.has(d.id);
+  d.addEventListener("toggle", () => {
+    if (d.open) openSecs.add(d.id); else openSecs.delete(d.id);
+    try { localStorage.setItem(OPEN_KEY, JSON.stringify([...openSecs])); } catch (_) {}
+  });
+});
+
+function connect() {
+  const es = new EventSource("/events");
+  es.onmessage = (e) => render(JSON.parse(e.data));
+  es.onerror = () => { $("connWrap").classList.remove("on"); text("conn", "detector offline, retrying…"); };
+}
+connect();
+</script>
+</body>
+</html>

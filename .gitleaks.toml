@@ -1,0 +1,18 @@
+# gitleaks: the default rules, minus known test material. Any other finding fails.
+title = "harvesting-dune"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "throwaway test certificates for 127.0.0.1 (tests/certs/README.md)"
+paths = ['''(^|/)tests/certs/(test|other)-(ca|server)[.]key$''']
+
+[[allowlists]]
+description = "test guild keys: their secrets are base64 of plain test words; a test keyword argument"
+regexTarget = "secret"
+regexes = [
+  '''^(gs1_[a-z0-9]{8}_)?(Qm9vdHN0cmFwVGVzdEtleUFscGhhMDAx|VGVzdE9ubHlCcmF2b0tleVNlY3JldDAy|SWRsZVRlc3RLZXlTZWNyZXQwMDA1MDA1|Q2hhcmxpZVRlc3RLZXlTZWNyZXQwMDMx|UmV2b2tlZFRlc3RLZXlTZWNyZXQwMDQx)$''',
+  '''^(BootstrapTestKeyAlpha001|TestOnlyBravoKeySecret02|IdleTestKeySecret0005005|CharlieTestKeySecret0031|RevokedTestKeySecret0041)$''',
+  '''^If_None_Match=$''',
+]

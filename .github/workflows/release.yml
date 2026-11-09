@@ -1,0 +1,133 @@
+# CD: builds the Windows installer and the release zip when a release is published, tests both, and attaches them.
+# Run it by hand (Actions > Release installer > Run workflow) to build a test installer without a release.
+name: Release installer
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write  # to attach the installer to the release
+
+jobs:
+  installer:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || github.ref }}
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Tests
+        run: |
+          uv sync
+          uv run pytest -q
+
+      - name: Version
+        id: version
+        shell: pwsh
+        run: |
+          $tag = '${{ github.event.release.tag_name }}'
+          if ($tag) {
+            $version = $tag.TrimStart('v')
+          } else {
+            $base = (Select-String -Path pyproject.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+            $version = "$base-dev.${{ github.run_number }}"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Installer version: $version"
+
+      - name: Build the installer (Inno Setup)
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+            if ($LASTEXITCODE) { throw "Inno Setup install failed" }
+          }
+          & $iscc /Q "/DAppVersion=${{ steps.version.outputs.version }}" installer\harvesting-dune.iss
+          if ($LASTEXITCODE) { throw "ISCC failed with exit code $LASTEXITCODE" }
+          Get-ChildItem dist\*.exe | Format-Table Name, Length
+
+      - name: Test the installer (silent install without autorun, then uninstall)
+        shell: pwsh
+        run: |
+          $exe = (Get-Item dist\harvesting-dune-setup-*.exe).FullName
+          $dir = Join-Path $env:RUNNER_TEMP 'harvesting-dune'
+          $p = Start-Process $exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/TASKS=""', "/DIR=`"$dir`"", "/LOG=`"$env:RUNNER_TEMP\setup.log`"" -Wait -PassThru
+          if ($p.ExitCode) { Get-Content "$env:RUNNER_TEMP\setup.log" -Tail 40; throw "setup exit code $($p.ExitCode)" }
+          & "$dir\.venv\Scripts\harvesting-dune.exe" --help
+          if ($LASTEXITCODE) { Get-Content "$dir\data\install.log" -Tail 40; throw "the installed detector does not start" }
+          $p = Start-Process "$dir\unins000.exe" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
+          if ($p.ExitCode) { throw "uninstall exit code $($p.ExitCode)" }
+          Start-Sleep -Seconds 3
+          if (Test-Path "$dir\.venv") { throw "the uninstaller left the .venv folder" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: harvesting-dune-setup-${{ steps.version.outputs.version }}
+          path: dist/*.exe
+          if-no-files-found: error
+
+      - name: Attach the installer to the release
+        if: github.event_name == 'release'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload '${{ github.event.release.tag_name }}' (Get-Item dist\*.exe).FullName --clobber -R '${{ github.repository }}'
+
+  zip:
+    # harvesting-dune-<version>.zip: extract, double-click Install.cmd (README "Install")
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || github.ref }}
+
+      - name: Version
+        id: version
+        shell: pwsh
+        run: |
+          $tag = '${{ github.event.release.tag_name }}'
+          if ($tag) {
+            $version = $tag.TrimStart('v')
+          } else {
+            $base = (Select-String -Path pyproject.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+            $version = "$base-dev.${{ github.run_number }}"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Build the zip
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File installer\build-zip.ps1 -Version '${{ steps.version.outputs.version }}'
+
+      - name: Hide any uv on this runner (a guildmate's PC has none)
+        shell: powershell
+        run: |
+          Get-Command uv.exe, uvx.exe, uvw.exe -All -ErrorAction SilentlyContinue | ForEach-Object {
+            Rename-Item -LiteralPath $_.Source -NewName ($_.Name + '.hidden'); Write-Host "hid $($_.Source)"
+          }
+          Get-ChildItem "$env:USERPROFILE\.local\bin\uv*.exe", "$env:USERPROFILE\.cargo\bin\uv*.exe" -ErrorAction SilentlyContinue |
+            ForEach-Object { Rename-Item -LiteralPath $_.FullName -NewName ($_.Name + '.hidden'); Write-Host "hid $($_.FullName)" }
+          if (Get-Command uv.exe -ErrorAction SilentlyContinue) { throw 'uv is still on PATH' }
+
+      - name: Test the zip (install, install again, uninstall)
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File installer\test-zip.ps1 -Zip 'dist\harvesting-dune-${{ steps.version.outputs.version }}.zip' -WorkDir "$env:RUNNER_TEMP\zip test"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: harvesting-dune-${{ steps.version.outputs.version }}-zip
+          path: dist/*.zip
+          if-no-files-found: error
+
+      - name: Attach the zip to the release
+        if: github.event_name == 'release'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload '${{ github.event.release.tag_name }}' (Get-Item dist\*.zip).FullName --clobber -R '${{ github.repository }}'

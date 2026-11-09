@@ -1,0 +1,22 @@
+[project]
+name = "harvesting-dune"
+version = "0.1.0"
+description = "Live Dune: Awakening resource observations from the gaming.tools companion feed, with vehicle-aware harvest scoring."
+requires-python = ">=3.14"
+dependencies = ["websockets>=13"]
+
+[project.scripts]
+harvesting-dune = "harvesting_dune.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/harvesting_dune"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

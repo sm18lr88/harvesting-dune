@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+data/
+.omo/
+.solidkg/
+.debug-journal.md
+data-run.log
+data-run.out
+data-run.prev.log
+*.tmp
+dist/
+data.bak-*/

@@ -1,0 +1,5450 @@
+{
+  "version": 1,
+  "doc": "docs/SYNC-PROTOCOL.md",
+  "rules": {
+    "serverNow": "Freeze the server clock at case.serverNow for the whole case.",
+    "given": "Load given.rows into the tables and set the global rev counter to given.rev before the request. given.priorRequests = send the same request that many times first (same clock). given.rows.profiles (optional) are stored profiles; given.profileRev (default 0) sets the profile rev counter.",
+    "rawBodyBytes": "When present, the request body is that many bytes of the letter a, with a matching Content-Length.",
+    "expectedResponseKeys": "The JSON response has exactly these top-level keys.",
+    "expectedResponse": "Exact values. List order: presence by characterName, sightings by rev. Floats compare with a tolerance of 1e-6.",
+    "expectedRows": "Logical rows per table after the request. Each table holds exactly this many rows; each listed row matches one stored row on every listed column. observers compares as a sorted list. A table missing from expectedRows is not checked (page-limit leaves the 501 generated sightings unchecked).",
+    "clientExpect": "Receiver rule: hideRowKeys = the scan rowKeys a client may hide after merging the response sightings.",
+    "rawBody": "When present, send this exact text as the body (it may hold JSON that is not standard, such as NaN).",
+    "fillerSightings": "Generate count sightings rows from template, varied as the vary text says, before the request.",
+    "expectedSightings": "When present, check the sightings list by count and first/last rev instead of exact values; expectedResponse then omits sightings.",
+    "expectedHeaders": "Each listed response header is present. Retry-After holds whole seconds (1-60).",
+    "problemDetails": "Every response with a status of 400 or more is Content-Type application/problem+json (RFC 9457): type, title, status (the real status code), error (the v1 text), and detail or extension members such as field.",
+    "keys": "Seed every key with created_at = createdAt, role = role, revoked_at = 1.0 when revoked, last_seen null. The storage clock is frozen at case.serverNow too, so key expiry (30 days without use) is judged at that time."
+  },
+  "keys": [
+    {
+      "keyId": "alpha001",
+      "secret": "Qm9vdHN0cmFwVGVzdEtleUFscGhhMDAx",
+      "token": "gs1_alpha001_Qm9vdHN0cmFwVGVzdEtleUFscGhhMDAx",
+      "sha256": "a0221a4e9df1ef02910127b11bb9a7bbdd154264dbca0aada60b25e206cdea9c",
+      "revoked": false,
+      "note": "Paul (Atreides)",
+      "createdAt": 1794100000.0,
+      "role": "regular"
+    },
+    {
+      "keyId": "bravo002",
+      "secret": "VGVzdE9ubHlCcmF2b0tleVNlY3JldDAy",
+      "token": "gs1_bravo002_VGVzdE9ubHlCcmF2b0tleVNlY3JldDAy",
+      "sha256": "09377d71f7093e0df555f0a617ae09e4a6ad4a4e2e99bf5096542a1b6b5e0904",
+      "revoked": false,
+      "note": "Chani (Atreides)",
+      "createdAt": 1794100000.0,
+      "role": "regular"
+    },
+    {
+      "keyId": "charl003",
+      "secret": "Q2hhcmxpZVRlc3RLZXlTZWNyZXQwMDMx",
+      "token": "gs1_charl003_Q2hhcmxpZVRlc3RLZXlTZWNyZXQwMDMx",
+      "sha256": "afcaff09cf4c2e3c26891ec88c831576192555fa50ce95d8d2c15eb5bbeb97f1",
+      "revoked": false,
+      "note": "Feyd (other battlegroup)",
+      "createdAt": 1794100000.0,
+      "role": "regular"
+    },
+    {
+      "keyId": "revok004",
+      "secret": "UmV2b2tlZFRlc3RLZXlTZWNyZXQwMDQx",
+      "token": "gs1_revok004_UmV2b2tlZFRlc3RLZXlTZWNyZXQwMDQx",
+      "sha256": "66213d85f7a977b924a52099c39a26fc22438ced102f03c4f11797c63ef52f70",
+      "revoked": true,
+      "note": "revoked key",
+      "createdAt": 1794100000.0,
+      "role": "regular"
+    },
+    {
+      "keyId": "idle0005",
+      "secret": "SWRsZVRlc3RLZXlTZWNyZXQwMDA1MDA1",
+      "token": "gs1_idle0005_SWRsZVRlc3RLZXlTZWNyZXQwMDA1MDA1",
+      "sha256": "842ac25a3bc33531bd05ffdf961920afb853ab3adcb274070ef75f08fc8be004",
+      "revoked": false,
+      "note": "regular key, never used, created 31 days before the cases",
+      "createdAt": 1791481600.0,
+      "role": "regular"
+    }
+  ],
+  "cases": [
+    {
+      "name": "first-poll",
+      "description": "since 0 with one spice record: the server stores it, assigns rev 1, and echoes the caller's own sighting.",
+      "serverNow": 1794160000.0,
+      "given": {
+        "rev": 0,
+        "rows": {
+          "sightings": [],
+          "presence": []
+        },
+        "priorRequests": 0
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1/sync",
+        "headers": {
+          "Authorization": "Bearer gs1_alpha001_Qm9vdHN0cmFwVGVzdEtleUFscGhhMDAx",
+          "Content-Type": "application/json",
+          "X-Client-Version": "0.9.0"
+        },
+        "body": {
+          "since": 0,
+          "sentAt": 1794159999.0,
+          "identity": {
+            "characterName": "Paul Test",
+            "characterId": 1001,
+            "battlegroupId": "prd-srv-test-alpha-erg"
+          },
+          "partition": {
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07"
+          },
+          "position": {
+            "x": 120000.0,
+            "y": -650000.0,
+            "z": 1400.0,
+            "observedAt": 1794159997.0
+          },
+          "records": [
+            {
+              "cls": "spice",
+              "type": "spicefieldlarge",
+              "x": 123456.0,
+              "y": -654321.0,
+              "z": 1500.0,
+              "observedAt": 1794159969.0,
+              "fill": 0.8,
+              "size": "large",
+              "rowKey": null,
+              "distCm": null
+            }
+          ]
+        }
+      },
+      "expectedStatus": 200,
+      "expectedResponseKeys": [
+        "now",
+        "next",
+        "keyState",
+        "presence",
+        "sightings"
+      ],
+      "expectedResponse": {
+        "now": 1794160000.0,
+        "next": 1,
+        "keyState": "valid",
+        "presence": [],
+        "sightings": [
+          {
+            "cls": "spice",
+            "type": "spicefieldlarge",
+            "x": 123456.0,
+            "y": -654321.0,
+            "z": 1500.0,
+            "fill": 0.8,
+            "size": "large",
+            "rowKey": null,
+            "distCm": null,
+            "observerName": "Paul Test",
+            "observerKey": "alpha001",
+            "observers": [
+              "alpha001"
+            ],
+            "rev": 1,
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07",
+            "ageS": 30.0
+          }
+        ]
+      },
+      "expectedRows": {
+        "sightings": [
+          {
+            "battlegroupId": "prd-srv-test-alpha-erg",
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07",
+            "cls": "spice",
+            "type": "spicefieldlarge",
+            "cellX": 61,
+            "cellY": -328,
+            "x": 123456.0,
+            "y": -654321.0,
+            "z": 1500.0,
+            "fill": 0.8,
+            "size": "large",
+            "rowKey": null,
+            "distCm": null,
+            "observedAt": 1794159969.0,
+            "receivedAt": 1794160000.0,
+            "lag": 30.0,
+            "observerKey": "alpha001",
+            "observerName": "Paul Test",
+            "observers": [
+              "alpha001"
+            ],
+            "rev": 1
+          }
+        ],
+        "presence": [
+          {
+            "keyId": "alpha001",
+            "characterId": 1001,
+            "characterName": "Paul Test",
+            "battlegroupId": "prd-srv-test-alpha-erg",
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07",
+            "x": 120000.0,
+            "y": -650000.0,
+            "z": 1400.0,
+            "receivedAt": 1794160000.0,
+            "lag": 2.0
+          }
+        ]
+      }
+    },
+    {
+      "name": "ore-record",
+      "description": "a live ore node (cls ore, no fill or size) is stored and echoed like any other record; the server keeps it 3 hours, like spice.",
+      "serverNow": 1794160000.0,
+      "given": {
+        "rev": 0,
+        "rows": {
+          "sightings": [],
+          "presence": []
+        },
+        "priorRequests": 0
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1/sync",
+        "headers": {
+          "Authorization": "Bearer gs1_alpha001_Qm9vdHN0cmFwVGVzdEtleUFscGhhMDAx",
+          "Content-Type": "application/json",
+          "X-Client-Version": "0.9.0"
+        },
+        "body": {
+          "since": 0,
+          "sentAt": 1794159999.0,
+          "identity": {
+            "characterName": "Paul Test",
+            "characterId": 1001,
+            "battlegroupId": "prd-srv-test-alpha-erg"
+          },
+          "partition": {
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07"
+          },
+          "position": {
+            "x": 120000.0,
+            "y": -650000.0,
+            "z": 1400.0,
+            "observedAt": 1794159997.0
+          },
+          "records": [
+            {
+              "cls": "ore",
+              "type": "magnetiteore",
+              "x": 123456.0,
+              "y": -654321.0,
+              "z": 1500.0,
+              "observedAt": 1794159969.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            }
+          ]
+        }
+      },
+      "expectedStatus": 200,
+      "expectedResponseKeys": [
+        "now",
+        "next",
+        "keyState",
+        "presence",
+        "sightings"
+      ],
+      "expectedResponse": {
+        "now": 1794160000.0,
+        "next": 1,
+        "keyState": "valid",
+        "presence": [],
+        "sightings": [
+          {
+            "cls": "ore",
+            "type": "magnetiteore",
+            "x": 123456.0,
+            "y": -654321.0,
+            "z": 1500.0,
+            "fill": null,
+            "size": null,
+            "rowKey": null,
+            "distCm": null,
+            "observerName": "Paul Test",
+            "observerKey": "alpha001",
+            "observers": [
+              "alpha001"
+            ],
+            "rev": 1,
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07",
+            "ageS": 30.0
+          }
+        ]
+      },
+      "expectedRows": {
+        "sightings": [
+          {
+            "battlegroupId": "prd-srv-test-alpha-erg",
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07",
+            "cls": "ore",
+            "type": "magnetiteore",
+            "cellX": 61,
+            "cellY": -328,
+            "x": 123456.0,
+            "y": -654321.0,
+            "z": 1500.0,
+            "fill": null,
+            "size": null,
+            "rowKey": null,
+            "distCm": null,
+            "observedAt": 1794159969.0,
+            "receivedAt": 1794160000.0,
+            "lag": 30.0,
+            "observerKey": "alpha001",
+            "observerName": "Paul Test",
+            "observers": [
+              "alpha001"
+            ],
+            "rev": 1
+          }
+        ],
+        "presence": [
+          {
+            "keyId": "alpha001",
+            "characterId": 1001,
+            "characterName": "Paul Test",
+            "battlegroupId": "prd-srv-test-alpha-erg",
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07",
+            "x": 120000.0,
+            "y": -650000.0,
+            "z": 1400.0,
+            "receivedAt": 1794160000.0,
+            "lag": 2.0
+          }
+        ]
+      }
+    },
+    {
+      "name": "second-poll",
+      "description": "since = the previous next (1): only rows with rev > 1 come back; presence lists other members of the battlegroup, never the caller.",
+      "serverNow": 1794160020.0,
+      "given": {
+        "rev": 2,
+        "rows": {
+          "sightings": [
+            {
+              "battlegroupId": "prd-srv-test-alpha-erg",
+              "worldId": "deepdesert_1",
+              "layout": "deepdesert_1_07",
+              "cls": "spice",
+              "type": "spicefieldlarge",
+              "cellX": 61,
+              "cellY": -328,
+              "x": 123456.0,
+              "y": -654321.0,
+              "z": 1500.0,
+              "fill": 0.8,
+              "size": "large",
+              "rowKey": null,
+              "distCm": null,
+              "observedAt": 1794159969.0,
+              "receivedAt": 1794160000.0,
+              "lag": 30.0,
+              "observerKey": "alpha001",
+              "observerName": "Paul Test",
+              "observers": [
+                "alpha001"
+              ],
+              "rev": 1
+            },
+            {
+              "battlegroupId": "prd-srv-test-alpha-erg",
+              "worldId": "deepdesert_1",
+              "layout": "deepdesert_1_07",
+              "cls": "blow",
+              "type": "spicefieldlarge",
+              "cellX": 25,
+              "cellY": 35,
+              "x": 50000.0,
+              "y": 70000.0,
+              "z": 900.0,
+              "fill": 1.0,
+              "size": "large",
+              "rowKey": null,
+              "distCm": null,
+              "observedAt": 1794160005.0,
+              "receivedAt": 1794160008.0,
+              "lag": 2.0,
+              "observerKey": "bravo002",
+              "observerName": "Chani Test",
+              "observers": [
+                "bravo002"
+              ],
+              "rev": 2
+            }
+          ],
+          "presence": [
+            {
+              "keyId": "alpha001",
+              "characterId": 1001,
+              "characterName": "Paul Test",
+              "battlegroupId": "prd-srv-test-alpha-erg",
+              "worldId": "deepdesert_1",
+              "layout": "deepdesert_1_07",
+              "x": 120000.0,
+              "y": -650000.0,
+              "z": 1400.0,
+              "receivedAt": 1794160000.0,
+              "lag": 2.0
+            },
+            {
+              "keyId": "bravo002",
+              "characterId": 1002,
+              "characterName": "Chani Test",
+              "battlegroupId": "prd-srv-test-alpha-erg",
+              "worldId": "deepdesert_1",
+              "layout": "deepdesert_1_07",
+              "x": 51000.0,
+              "y": 71000.0,
+              "z": 900.0,
+              "receivedAt": 1794160008.0,
+              "lag": 1.0
+            }
+          ]
+        },
+        "priorRequests": 0
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1/sync",
+        "headers": {
+          "Authorization": "Bearer gs1_alpha001_Qm9vdHN0cmFwVGVzdEtleUFscGhhMDAx",
+          "Content-Type": "application/json",
+          "X-Client-Version": "0.9.0"
+        },
+        "body": {
+          "since": 1,
+          "sentAt": 1794160019.0,
+          "identity": {
+            "characterName": "Paul Test",
+            "characterId": 1001,
+            "battlegroupId": "prd-srv-test-alpha-erg"
+          },
+          "partition": {
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07"
+          },
+          "position": {
+            "x": 121000.0,
+            "y": -651000.0,
+            "z": 1400.0,
+            "observedAt": 1794160018.0
+          },
+          "records": []
+        }
+      },
+      "expectedStatus": 200,
+      "expectedResponseKeys": [
+        "now",
+        "next",
+        "keyState",
+        "presence",
+        "sightings"
+      ],
+      "expectedResponse": {
+        "now": 1794160020.0,
+        "next": 2,
+        "keyState": "valid",
+        "presence": [
+          {
+            "characterName": "Chani Test",
+            "characterId": 1002,
+            "battlegroupId": "prd-srv-test-alpha-erg",
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07",
+            "x": 51000.0,
+            "y": 71000.0,
+            "z": 900.0,
+            "keyId": "bravo002",
+            "ageS": 13.0,
+            "state": "online",
+            "lastNextS": 60.0
+          }
+        ],
+        "sightings": [
+          {
+            "cls": "blow",
+            "type": "spicefieldlarge",
+            "x": 50000.0,
+            "y": 70000.0,
+            "z": 900.0,
+            "fill": 1.0,
+            "size": "large",
+            "rowKey": null,
+            "distCm": null,
+            "observerName": "Chani Test",
+            "observerKey": "bravo002",
+            "observers": [
+              "bravo002"
+            ],
+            "rev": 2,
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07",
+            "ageS": 14.0
+          }
+        ]
+      },
+      "expectedRows": {
+        "sightings": [
+          {
+            "battlegroupId": "prd-srv-test-alpha-erg",
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07",
+            "cls": "spice",
+            "type": "spicefieldlarge",
+            "cellX": 61,
+            "cellY": -328,
+            "x": 123456.0,
+            "y": -654321.0,
+            "z": 1500.0,
+            "fill": 0.8,
+            "size": "large",
+            "rowKey": null,
+            "distCm": null,
+            "observedAt": 1794159969.0,
+            "receivedAt": 1794160000.0,
+            "lag": 30.0,
+            "observerKey": "alpha001",
+            "observerName": "Paul Test",
+            "observers": [
+              "alpha001"
+            ],
+            "rev": 1
+          },
+          {
+            "battlegroupId": "prd-srv-test-alpha-erg",
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07",
+            "cls": "blow",
+            "type": "spicefieldlarge",
+            "cellX": 25,
+            "cellY": 35,
+            "x": 50000.0,
+            "y": 70000.0,
+            "z": 900.0,
+            "fill": 1.0,
+            "size": "large",
+            "rowKey": null,
+            "distCm": null,
+            "observedAt": 1794160005.0,
+            "receivedAt": 1794160008.0,
+            "lag": 2.0,
+            "observerKey": "bravo002",
+            "observerName": "Chani Test",
+            "observers": [
+              "bravo002"
+            ],
+            "rev": 2
+          }
+        ],
+        "presence": [
+          {
+            "keyId": "alpha001",
+            "characterId": 1001,
+            "characterName": "Paul Test",
+            "battlegroupId": "prd-srv-test-alpha-erg",
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07",
+            "x": 121000.0,
+            "y": -651000.0,
+            "z": 1400.0,
+            "receivedAt": 1794160020.0,
+            "lag": 1.0
+          },
+          {
+            "keyId": "bravo002",
+            "characterId": 1002,
+            "characterName": "Chani Test",
+            "battlegroupId": "prd-srv-test-alpha-erg",
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07",
+            "x": 51000.0,
+            "y": 71000.0,
+            "z": 900.0,
+            "receivedAt": 1794160008.0,
+            "lag": 1.0
+          }
+        ]
+      }
+    },
+    {
+      "name": "foreign-partition",
+      "description": "a key from another battlegroup on another layout sees none of the stored rows: no sightings, no presence.",
+      "serverNow": 1794160025.0,
+      "given": {
+        "rev": 2,
+        "rows": {
+          "sightings": [
+            {
+              "battlegroupId": "prd-srv-test-alpha-erg",
+              "worldId": "deepdesert_1",
+              "layout": "deepdesert_1_07",
+              "cls": "spice",
+              "type": "spicefieldlarge",
+              "cellX": 61,
+              "cellY": -328,
+              "x": 123456.0,
+              "y": -654321.0,
+              "z": 1500.0,
+              "fill": 0.8,
+              "size": "large",
+              "rowKey": null,
+              "distCm": null,
+              "observedAt": 1794159969.0,
+              "receivedAt": 1794160000.0,
+              "lag": 30.0,
+              "observerKey": "alpha001",
+              "observerName": "Paul Test",
+              "observers": [
+                "alpha001"
+              ],
+              "rev": 1
+            },
+            {
+              "battlegroupId": "prd-srv-test-alpha-erg",
+              "worldId": "deepdesert_1",
+              "layout": "deepdesert_1_07",
+              "cls": "blow",
+              "type": "spicefieldlarge",
+              "cellX": 25,
+              "cellY": 35,
+              "x": 50000.0,
+              "y": 70000.0,
+              "z": 900.0,
+              "fill": 1.0,
+              "size": "large",
+              "rowKey": null,
+              "distCm": null,
+              "observedAt": 1794160005.0,
+              "receivedAt": 1794160008.0,
+              "lag": 2.0,
+              "observerKey": "bravo002",
+              "observerName": "Chani Test",
+              "observers": [
+                "bravo002"
+              ],
+              "rev": 2
+            }
+          ],
+          "presence": [
+            {
+              "keyId": "alpha001",
+              "characterId": 1001,
+              "characterName": "Paul Test",
+              "battlegroupId": "prd-srv-test-alpha-erg",
+              "worldId": "deepdesert_1",
+              "layout": "deepdesert_1_07",
+              "x": 120000.0,
+              "y": -650000.0,
+              "z": 1400.0,
+              "receivedAt": 1794160000.0,
+              "lag": 2.0
+            },
+            {
+              "keyId": "bravo002",
+              "characterId": 1002,
+              "characterName": "Chani Test",
+              "battlegroupId": "prd-srv-test-alpha-erg",
+              "worldId": "deepdesert_1",
+              "layout": "deepdesert_1_07",
+              "x": 51000.0,
+              "y": 71000.0,
+              "z": 900.0,
+              "receivedAt": 1794160008.0,
+              "lag": 1.0
+            }
+          ]
+        },
+        "priorRequests": 0
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1/sync",
+        "headers": {
+          "Authorization": "Bearer gs1_charl003_Q2hhcmxpZVRlc3RLZXlTZWNyZXQwMDMx",
+          "Content-Type": "application/json",
+          "X-Client-Version": "0.9.0"
+        },
+        "body": {
+          "since": 0,
+          "sentAt": 1794160025.0,
+          "identity": {
+            "characterName": "Feyd Test",
+            "characterId": 1003,
+            "battlegroupId": "prd-srv-test-beta-erg"
+          },
+          "partition": {
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_08"
+          },
+          "position": {
+            "x": 10.0,
+            "y": 20.0,
+            "z": 30.0,
+            "observedAt": 1794160024.0
+          },
+          "records": []
+        }
+      },
+      "expectedStatus": 200,
+      "expectedResponseKeys": [
+        "now",
+        "next",
+        "keyState",
+        "presence",
+        "sightings"
+      ],
+      "expectedResponse": {
+        "now": 1794160025.0,
+        "next": 2,
+        "keyState": "valid",
+        "presence": [],
+        "sightings": []
+      },
+      "expectedRows": {
+        "sightings": [
+          {
+            "battlegroupId": "prd-srv-test-alpha-erg",
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07",
+            "cls": "spice",
+            "type": "spicefieldlarge",
+            "cellX": 61,
+            "cellY": -328,
+            "x": 123456.0,
+            "y": -654321.0,
+            "z": 1500.0,
+            "fill": 0.8,
+            "size": "large",
+            "rowKey": null,
+            "distCm": null,
+            "observedAt": 1794159969.0,
+            "receivedAt": 1794160000.0,
+            "lag": 30.0,
+            "observerKey": "alpha001",
+            "observerName": "Paul Test",
+            "observers": [
+              "alpha001"
+            ],
+            "rev": 1
+          },
+          {
+            "battlegroupId": "prd-srv-test-alpha-erg",
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07",
+            "cls": "blow",
+            "type": "spicefieldlarge",
+            "cellX": 25,
+            "cellY": 35,
+            "x": 50000.0,
+            "y": 70000.0,
+            "z": 900.0,
+            "fill": 1.0,
+            "size": "large",
+            "rowKey": null,
+            "distCm": null,
+            "observedAt": 1794160005.0,
+            "receivedAt": 1794160008.0,
+            "lag": 2.0,
+            "observerKey": "bravo002",
+            "observerName": "Chani Test",
+            "observers": [
+              "bravo002"
+            ],
+            "rev": 2
+          }
+        ],
+        "presence": [
+          {
+            "keyId": "alpha001",
+            "characterId": 1001,
+            "characterName": "Paul Test",
+            "battlegroupId": "prd-srv-test-alpha-erg",
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07",
+            "x": 120000.0,
+            "y": -650000.0,
+            "z": 1400.0,
+            "receivedAt": 1794160000.0,
+            "lag": 2.0
+          },
+          {
+            "keyId": "bravo002",
+            "characterId": 1002,
+            "characterName": "Chani Test",
+            "battlegroupId": "prd-srv-test-alpha-erg",
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07",
+            "x": 51000.0,
+            "y": 71000.0,
+            "z": 900.0,
+            "receivedAt": 1794160008.0,
+            "lag": 1.0
+          },
+          {
+            "keyId": "charl003",
+            "characterId": 1003,
+            "characterName": "Feyd Test",
+            "battlegroupId": "prd-srv-test-beta-erg",
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_08",
+            "x": 10.0,
+            "y": 20.0,
+            "z": 30.0,
+            "receivedAt": 1794160025.0,
+            "lag": 1.0
+          }
+        ]
+      }
+    },
+    {
+      "name": "other-layout",
+      "description": "same battlegroup, older Deep Desert layout: no sightings from layout deepdesert_1_07, but the roster (presence) is battlegroup-wide. position null = the member turned position sharing off.",
+      "serverNow": 1794160030.0,
+      "given": {
+        "rev": 2,
+        "rows": {
+          "sightings": [
+            {
+              "battlegroupId": "prd-srv-test-alpha-erg",
+              "worldId": "deepdesert_1",
+              "layout": "deepdesert_1_07",
+              "cls": "spice",
+              "type": "spicefieldlarge",
+              "cellX": 61,
+              "cellY": -328,
+              "x": 123456.0,
+              "y": -654321.0,
+              "z": 1500.0,
+              "fill": 0.8,
+              "size": "large",
+              "rowKey": null,
+              "distCm": null,
+              "observedAt": 1794159969.0,
+              "receivedAt": 1794160000.0,
+              "lag": 30.0,
+              "observerKey": "alpha001",
+              "observerName": "Paul Test",
+              "observers": [
+                "alpha001"
+              ],
+              "rev": 1
+            },
+            {
+              "battlegroupId": "prd-srv-test-alpha-erg",
+              "worldId": "deepdesert_1",
+              "layout": "deepdesert_1_07",
+              "cls": "blow",
+              "type": "spicefieldlarge",
+              "cellX": 25,
+              "cellY": 35,
+              "x": 50000.0,
+              "y": 70000.0,
+              "z": 900.0,
+              "fill": 1.0,
+              "size": "large",
+              "rowKey": null,
+              "distCm": null,
+              "observedAt": 1794160005.0,
+              "receivedAt": 1794160008.0,
+              "lag": 2.0,
+              "observerKey": "bravo002",
+              "observerName": "Chani Test",
+              "observers": [
+                "bravo002"
+              ],
+              "rev": 2
+            }
+          ],
+          "presence": [
+            {
+              "keyId": "alpha001",
+              "characterId": 1001,
+              "characterName": "Paul Test",
+              "battlegroupId": "prd-srv-test-alpha-erg",
+              "worldId": "deepdesert_1",
+              "layout": "deepdesert_1_07",
+              "x": 120000.0,
+              "y": -650000.0,
+              "z": 1400.0,
+              "receivedAt": 1794160000.0,
+              "lag": 2.0
+            },
+            {
+              "keyId": "bravo002",
+              "characterId": 1002,
+              "characterName": "Chani Test",
+              "battlegroupId": "prd-srv-test-alpha-erg",
+              "worldId": "deepdesert_1",
+              "layout": "deepdesert_1_07",
+              "x": 51000.0,
+              "y": 71000.0,
+              "z": 900.0,
+              "receivedAt": 1794160008.0,
+              "lag": 1.0
+            }
+          ]
+        },
+        "priorRequests": 0
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1/sync",
+        "headers": {
+          "Authorization": "Bearer gs1_bravo002_VGVzdE9ubHlCcmF2b0tleVNlY3JldDAy",
+          "Content-Type": "application/json",
+          "X-Client-Version": "0.9.0"
+        },
+        "body": {
+          "since": 0,
+          "sentAt": 1794160030.0,
+          "identity": {
+            "characterName": "Chani Test",
+            "characterId": 1002,
+            "battlegroupId": "prd-srv-test-alpha-erg"
+          },
+          "partition": {
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_06"
+          },
+          "position": null,
+          "records": []
+        }
+      },
+      "expectedStatus": 200,
+      "expectedResponseKeys": [
+        "now",
+        "next",
+        "keyState",
+        "presence",
+        "sightings"
+      ],
+      "expectedResponse": {
+        "now": 1794160030.0,
+        "next": 2,
+        "keyState": "valid",
+        "presence": [
+          {
+            "characterName": "Paul Test",
+            "characterId": 1001,
+            "battlegroupId": "prd-srv-test-alpha-erg",
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07",
+            "x": 120000.0,
+            "y": -650000.0,
+            "z": 1400.0,
+            "keyId": "alpha001",
+            "ageS": 32.0,
+            "state": "online",
+            "lastNextS": 60.0
+          }
+        ],
+        "sightings": []
+      },
+      "expectedRows": {
+        "sightings": [
+          {
+            "battlegroupId": "prd-srv-test-alpha-erg",
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07",
+            "cls": "spice",
+            "type": "spicefieldlarge",
+            "cellX": 61,
+            "cellY": -328,
+            "x": 123456.0,
+            "y": -654321.0,
+            "z": 1500.0,
+            "fill": 0.8,
+            "size": "large",
+            "rowKey": null,
+            "distCm": null,
+            "observedAt": 1794159969.0,
+            "receivedAt": 1794160000.0,
+            "lag": 30.0,
+            "observerKey": "alpha001",
+            "observerName": "Paul Test",
+            "observers": [
+              "alpha001"
+            ],
+            "rev": 1
+          },
+          {
+            "battlegroupId": "prd-srv-test-alpha-erg",
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07",
+            "cls": "blow",
+            "type": "spicefieldlarge",
+            "cellX": 25,
+            "cellY": 35,
+            "x": 50000.0,
+            "y": 70000.0,
+            "z": 900.0,
+            "fill": 1.0,
+            "size": "large",
+            "rowKey": null,
+            "distCm": null,
+            "observedAt": 1794160005.0,
+            "receivedAt": 1794160008.0,
+            "lag": 2.0,
+            "observerKey": "bravo002",
+            "observerName": "Chani Test",
+            "observers": [
+              "bravo002"
+            ],
+            "rev": 2
+          }
+        ],
+        "presence": [
+          {
+            "keyId": "alpha001",
+            "characterId": 1001,
+            "characterName": "Paul Test",
+            "battlegroupId": "prd-srv-test-alpha-erg",
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07",
+            "x": 120000.0,
+            "y": -650000.0,
+            "z": 1400.0,
+            "receivedAt": 1794160000.0,
+            "lag": 2.0
+          },
+          {
+            "keyId": "bravo002",
+            "characterId": 1002,
+            "characterName": "Chani Test",
+            "battlegroupId": "prd-srv-test-alpha-erg",
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_06",
+            "x": null,
+            "y": null,
+            "z": null,
+            "receivedAt": 1794160030.0,
+            "lag": 0.0
+          }
+        ]
+      }
+    },
+    {
+      "name": "stale-two-keys",
+      "description": "a second key reports the same confirmed-stale row (same cls, type and 2000 cm cell) with a distance: one row, latest observation wins, observers holds both key ids, rev moves to 2. The receiver may hide the scan row.",
+      "serverNow": 1794160040.0,
+      "given": {
+        "rev": 1,
+        "rows": {
+          "sightings": [
+            {
+              "battlegroupId": "prd-srv-test-alpha-erg",
+              "worldId": "deepdesert_1",
+              "layout": "deepdesert_1_07",
+              "cls": "stale",
+              "type": "spicefieldmedium",
+              "cellX": 100,
+              "cellY": 150,
+              "x": 200000.0,
+              "y": 300000.0,
+              "z": 800.0,
+              "fill": null,
+              "size": null,
+              "rowKey": "spicefieldmedium:200000:300000",
+              "distCm": 4500.0,
+              "observedAt": 1794159995.0,
+              "receivedAt": 1794160000.0,
+              "lag": 5.0,
+              "observerKey": "alpha001",
+              "observerName": "Paul Test",
+              "observers": [
+                "alpha001"
+              ],
+              "rev": 1
+            }
+          ],
+          "presence": []
+        },
+        "priorRequests": 0
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1/sync",
+        "headers": {
+          "Authorization": "Bearer gs1_bravo002_VGVzdE9ubHlCcmF2b0tleVNlY3JldDAy",
+          "Content-Type": "application/json",
+          "X-Client-Version": "0.9.0"
+        },
+        "body": {
+          "since": 0,
+          "sentAt": 1794160039.0,
+          "identity": {
+            "characterName": "Chani Test",
+            "characterId": 1002,
+            "battlegroupId": "prd-srv-test-alpha-erg"
+          },
+          "partition": {
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07"
+          },
+          "position": null,
+          "records": [
+            {
+              "cls": "stale",
+              "type": "spicefieldmedium",
+              "x": 200100.0,
+              "y": 300050.0,
+              "z": 800.0,
+              "observedAt": 1794160035.0,
+              "fill": null,
+              "size": null,
+              "rowKey": "spicefieldmedium:200000:300000",
+              "distCm": 3000.0
+            }
+          ]
+        }
+      },
+      "expectedStatus": 200,
+      "expectedResponseKeys": [
+        "now",
+        "next",
+        "keyState",
+        "presence",
+        "sightings"
+      ],
+      "expectedResponse": {
+        "now": 1794160040.0,
+        "next": 2,
+        "keyState": "valid",
+        "presence": [],
+        "sightings": [
+          {
+            "cls": "stale",
+            "type": "spicefieldmedium",
+            "x": 200100.0,
+            "y": 300050.0,
+            "z": 800.0,
+            "fill": null,
+            "size": null,
+            "rowKey": "spicefieldmedium:200000:300000",
+            "distCm": 3000.0,
+            "observerName": "Chani Test",
+            "observerKey": "bravo002",
+            "observers": [
+              "alpha001",
+              "bravo002"
+            ],
+            "rev": 2,
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07",
+            "ageS": 4.0
+          }
+        ]
+      },
+      "expectedRows": {
+        "sightings": [
+          {
+            "battlegroupId": "prd-srv-test-alpha-erg",
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07",
+            "cls": "stale",
+            "type": "spicefieldmedium",
+            "cellX": 100,
+            "cellY": 150,
+            "x": 200100.0,
+            "y": 300050.0,
+            "z": 800.0,
+            "fill": null,
+            "size": null,
+            "rowKey": "spicefieldmedium:200000:300000",
+            "distCm": 3000.0,
+            "observedAt": 1794160035.0,
+            "receivedAt": 1794160040.0,
+            "lag": 4.0,
+            "observerKey": "bravo002",
+            "observerName": "Chani Test",
+            "observers": [
+              "alpha001",
+              "bravo002"
+            ],
+            "rev": 2
+          }
+        ],
+        "presence": [
+          {
+            "keyId": "bravo002",
+            "characterId": 1002,
+            "characterName": "Chani Test",
+            "battlegroupId": "prd-srv-test-alpha-erg",
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07",
+            "x": null,
+            "y": null,
+            "z": null,
+            "receivedAt": 1794160040.0,
+            "lag": 0.0
+          }
+        ]
+      },
+      "clientExpect": {
+        "hideRowKeys": [
+          "spicefieldmedium:200000:300000"
+        ]
+      }
+    },
+    {
+      "name": "stale-one-key",
+      "description": "only one key reports the stale row: it is stored and returned, but one observer never hides a scan row.",
+      "serverNow": 1794160040.0,
+      "given": {
+        "rev": 0,
+        "rows": {
+          "sightings": [],
+          "presence": []
+        },
+        "priorRequests": 0
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1/sync",
+        "headers": {
+          "Authorization": "Bearer gs1_alpha001_Qm9vdHN0cmFwVGVzdEtleUFscGhhMDAx",
+          "Content-Type": "application/json",
+          "X-Client-Version": "0.9.0"
+        },
+        "body": {
+          "since": 0,
+          "sentAt": 1794160039.0,
+          "identity": {
+            "characterName": "Paul Test",
+            "characterId": 1001,
+            "battlegroupId": "prd-srv-test-alpha-erg"
+          },
+          "partition": {
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07"
+          },
+          "position": null,
+          "records": [
+            {
+              "cls": "stale",
+              "type": "spicefieldmedium",
+              "x": 200000.0,
+              "y": 300000.0,
+              "z": 800.0,
+              "observedAt": 1794160035.0,
+              "fill": null,
+              "size": null,
+              "rowKey": "spicefieldmedium:200000:300000",
+              "distCm": 4500.0
+            }
+          ]
+        }
+      },
+      "expectedStatus": 200,
+      "expectedResponseKeys": [
+        "now",
+        "next",
+        "keyState",
+        "presence",
+        "sightings"
+      ],
+      "expectedResponse": {
+        "now": 1794160040.0,
+        "next": 1,
+        "keyState": "valid",
+        "presence": [],
+        "sightings": [
+          {
+            "cls": "stale",
+            "type": "spicefieldmedium",
+            "x": 200000.0,
+            "y": 300000.0,
+            "z": 800.0,
+            "fill": null,
+            "size": null,
+            "rowKey": "spicefieldmedium:200000:300000",
+            "distCm": 4500.0,
+            "observerName": "Paul Test",
+            "observerKey": "alpha001",
+            "observers": [
+              "alpha001"
+            ],
+            "rev": 1,
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07",
+            "ageS": 4.0
+          }
+        ]
+      },
+      "expectedRows": {
+        "sightings": [
+          {
+            "battlegroupId": "prd-srv-test-alpha-erg",
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07",
+            "cls": "stale",
+            "type": "spicefieldmedium",
+            "cellX": 100,
+            "cellY": 150,
+            "x": 200000.0,
+            "y": 300000.0,
+            "z": 800.0,
+            "fill": null,
+            "size": null,
+            "rowKey": "spicefieldmedium:200000:300000",
+            "distCm": 4500.0,
+            "observedAt": 1794160035.0,
+            "receivedAt": 1794160040.0,
+            "lag": 4.0,
+            "observerKey": "alpha001",
+            "observerName": "Paul Test",
+            "observers": [
+              "alpha001"
+            ],
+            "rev": 1
+          }
+        ],
+        "presence": [
+          {
+            "keyId": "alpha001",
+            "characterId": 1001,
+            "characterName": "Paul Test",
+            "battlegroupId": "prd-srv-test-alpha-erg",
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07",
+            "x": null,
+            "y": null,
+            "z": null,
+            "receivedAt": 1794160040.0,
+            "lag": 0.0
+          }
+        ]
+      },
+      "clientExpect": {
+        "hideRowKeys": []
+      }
+    },
+    {
+      "name": "bad-key",
+      "description": "an unknown key id: 401, nothing stored.",
+      "serverNow": 1794160000.0,
+      "given": {
+        "rev": 0,
+        "rows": {
+          "sightings": [],
+          "presence": []
+        },
+        "priorRequests": 0
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1/sync",
+        "headers": {
+          "Authorization": "Bearer gs1_zzzz9999_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "Content-Type": "application/json",
+          "X-Client-Version": "0.9.0"
+        },
+        "body": {
+          "since": 0,
+          "sentAt": 1794160000.0,
+          "identity": {
+            "characterName": "Paul Test",
+            "characterId": 1001,
+            "battlegroupId": "prd-srv-test-alpha-erg"
+          },
+          "partition": {
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07"
+          },
+          "position": null,
+          "records": []
+        }
+      },
+      "expectedStatus": 401,
+      "expectedResponseKeys": [
+        "type",
+        "title",
+        "status",
+        "error",
+        "detail"
+      ],
+      "expectedResponse": {
+        "type": "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.mdinvalid-key",
+        "title": "Key is not valid",
+        "status": 401,
+        "error": "invalid key",
+        "detail": "The key is missing, unknown or revoked."
+      },
+      "expectedRows": {
+        "sightings": [],
+        "presence": []
+      },
+      "expectedHeaders": [
+        "WWW-Authenticate"
+      ]
+    },
+    {
+      "name": "revoked-key",
+      "description": "a revoked key: 401, nothing stored.",
+      "serverNow": 1794160000.0,
+      "given": {
+        "rev": 0,
+        "rows": {
+          "sightings": [],
+          "presence": []
+        },
+        "priorRequests": 0
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1/sync",
+        "headers": {
+          "Authorization": "Bearer gs1_revok004_UmV2b2tlZFRlc3RLZXlTZWNyZXQwMDQx",
+          "Content-Type": "application/json",
+          "X-Client-Version": "0.9.0"
+        },
+        "body": {
+          "since": 0,
+          "sentAt": 1794160000.0,
+          "identity": {
+            "characterName": "Old Test",
+            "characterId": 1004,
+            "battlegroupId": "prd-srv-test-alpha-erg"
+          },
+          "partition": {
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07"
+          },
+          "position": null,
+          "records": []
+        }
+      },
+      "expectedStatus": 401,
+      "expectedResponseKeys": [
+        "type",
+        "title",
+        "status",
+        "error",
+        "detail"
+      ],
+      "expectedResponse": {
+        "type": "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.mdinvalid-key",
+        "title": "Key is not valid",
+        "status": 401,
+        "error": "invalid key",
+        "detail": "The key is missing, unknown or revoked."
+      },
+      "expectedRows": {
+        "sightings": [],
+        "presence": []
+      },
+      "expectedHeaders": [
+        "WWW-Authenticate"
+      ]
+    },
+    {
+      "name": "expired-key",
+      "description": "a regular key never used and created 31 days ago (over 30 days idle): 401 with type #key-expired, the same WWW-Authenticate, nothing stored.",
+      "serverNow": 1794160000.0,
+      "given": {
+        "rev": 0,
+        "rows": {
+          "sightings": [],
+          "presence": []
+        },
+        "priorRequests": 0
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1/sync",
+        "headers": {
+          "Authorization": "Bearer gs1_idle0005_SWRsZVRlc3RLZXlTZWNyZXQwMDA1MDA1",
+          "Content-Type": "application/json",
+          "X-Client-Version": "0.9.0"
+        },
+        "body": {
+          "since": 0,
+          "sentAt": 1794160000.0,
+          "identity": {
+            "characterName": "Idle Test",
+            "characterId": 1005,
+            "battlegroupId": "prd-srv-test-alpha-erg"
+          },
+          "partition": {
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07"
+          },
+          "position": null,
+          "records": []
+        }
+      },
+      "expectedStatus": 401,
+      "expectedResponseKeys": [
+        "type",
+        "title",
+        "status",
+        "error",
+        "detail"
+      ],
+      "expectedResponse": {
+        "type": "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.mdkey-expired",
+        "title": "Key expired",
+        "status": 401,
+        "error": "invalid key",
+        "detail": "The key was not used for 30 days. Ask the admin to renew it."
+      },
+      "expectedRows": {
+        "sightings": [],
+        "presence": []
+      },
+      "expectedHeaders": [
+        "WWW-Authenticate"
+      ]
+    },
+    {
+      "name": "too-big",
+      "description": "a body over 256 KB (262144 bytes): 413 before the body is parsed, nothing stored. rawBodyBytes = send that many bytes of the letter a as the body.",
+      "serverNow": 1794160000.0,
+      "given": {
+        "rev": 0,
+        "rows": {
+          "sightings": [],
+          "presence": []
+        },
+        "priorRequests": 0
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1/sync",
+        "headers": {
+          "Authorization": "Bearer gs1_alpha001_Qm9vdHN0cmFwVGVzdEtleUFscGhhMDAx",
+          "Content-Type": "application/json",
+          "X-Client-Version": "0.9.0"
+        },
+        "rawBodyBytes": 262145
+      },
+      "expectedStatus": 413,
+      "expectedResponseKeys": [
+        "type",
+        "title",
+        "status",
+        "error",
+        "detail"
+      ],
+      "expectedResponse": {
+        "type": "about:blank",
+        "title": "Content Too Large",
+        "status": 413,
+        "error": "body too large",
+        "detail": "The body is over 262144 bytes, as sent or after inflating."
+      },
+      "expectedRows": {
+        "sightings": [],
+        "presence": []
+      }
+    },
+    {
+      "name": "rate-limited",
+      "description": "the same key already sent 30 requests in this minute (given.priorRequests, all at serverNow): the 31st gets 429 with a Retry-After header in whole seconds (1-60).",
+      "serverNow": 1794160000.0,
+      "given": {
+        "rev": 0,
+        "rows": {
+          "sightings": [],
+          "presence": []
+        },
+        "priorRequests": 30
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1/sync",
+        "headers": {
+          "Authorization": "Bearer gs1_alpha001_Qm9vdHN0cmFwVGVzdEtleUFscGhhMDAx",
+          "Content-Type": "application/json",
+          "X-Client-Version": "0.9.0"
+        },
+        "body": {
+          "since": 0,
+          "sentAt": 1794160000.0,
+          "identity": {
+            "characterName": "Paul Test",
+            "characterId": 1001,
+            "battlegroupId": "prd-srv-test-alpha-erg"
+          },
+          "partition": {
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07"
+          },
+          "position": null,
+          "records": []
+        }
+      },
+      "expectedStatus": 429,
+      "expectedResponseKeys": [
+        "type",
+        "title",
+        "status",
+        "error",
+        "detail"
+      ],
+      "expectedResponse": {
+        "type": "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.mdrate-limited",
+        "title": "Too many requests",
+        "status": 429,
+        "error": "rate limited",
+        "detail": "Try again in 2 s."
+      },
+      "expectedHeaders": [
+        "Retry-After"
+      ],
+      "expectedRows": {
+        "sightings": [],
+        "presence": [
+          {
+            "keyId": "alpha001",
+            "characterId": 1001,
+            "characterName": "Paul Test",
+            "battlegroupId": "prd-srv-test-alpha-erg",
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07",
+            "x": null,
+            "y": null,
+            "z": null,
+            "receivedAt": 1794160000.0,
+            "lag": 0.0
+          }
+        ]
+      }
+    },
+    {
+      "name": "bad-shape",
+      "description": "an unknown record class: 400 naming the field; the whole request is rejected, nothing stored.",
+      "serverNow": 1794160000.0,
+      "given": {
+        "rev": 0,
+        "rows": {
+          "sightings": [],
+          "presence": []
+        },
+        "priorRequests": 0
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1/sync",
+        "headers": {
+          "Authorization": "Bearer gs1_alpha001_Qm9vdHN0cmFwVGVzdEtleUFscGhhMDAx",
+          "Content-Type": "application/json",
+          "X-Client-Version": "0.9.0"
+        },
+        "body": {
+          "since": 0,
+          "sentAt": 1794160000.0,
+          "identity": {
+            "characterName": "Paul Test",
+            "characterId": 1001,
+            "battlegroupId": "prd-srv-test-alpha-erg"
+          },
+          "partition": {
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07"
+          },
+          "position": null,
+          "records": [
+            {
+              "cls": "loot",
+              "type": "spicefieldlarge",
+              "x": 1.0,
+              "y": 2.0,
+              "z": 3.0,
+              "observedAt": 1794160000.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            }
+          ]
+        }
+      },
+      "expectedStatus": 400,
+      "expectedResponseKeys": [
+        "type",
+        "title",
+        "status",
+        "error",
+        "detail",
+        "field"
+      ],
+      "expectedResponse": {
+        "type": "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.mdinvalid-field",
+        "title": "Request body is invalid",
+        "status": 400,
+        "error": "bad request",
+        "detail": "records[0].cls is missing, unknown or out of range",
+        "field": "records[0].cls"
+      },
+      "expectedRows": {
+        "sightings": [],
+        "presence": []
+      }
+    },
+    {
+      "name": "health",
+      "description": "GET /health needs no key.",
+      "serverNow": 1794160000.0,
+      "given": {
+        "rev": 0,
+        "rows": {
+          "sightings": [],
+          "presence": []
+        },
+        "priorRequests": 0
+      },
+      "request": {
+        "method": "GET",
+        "path": "/health",
+        "headers": {}
+      },
+      "expectedStatus": 200,
+      "expectedResponseKeys": [
+        "ok",
+        "now",
+        "version"
+      ],
+      "expectedResponse": {
+        "ok": true,
+        "now": 1794160000.0,
+        "version": "1"
+      },
+      "expectedRows": {
+        "sightings": [],
+        "presence": []
+      }
+    },
+    {
+      "name": "not-found",
+      "description": "any other path: 404.",
+      "serverNow": 1794160000.0,
+      "given": {
+        "rev": 0,
+        "rows": {
+          "sightings": [],
+          "presence": []
+        },
+        "priorRequests": 0
+      },
+      "request": {
+        "method": "GET",
+        "path": "/v1/other",
+        "headers": {
+          "Authorization": "Bearer gs1_alpha001_Qm9vdHN0cmFwVGVzdEtleUFscGhhMDAx",
+          "Content-Type": "application/json",
+          "X-Client-Version": "0.9.0"
+        }
+      },
+      "expectedStatus": 404,
+      "expectedResponseKeys": [
+        "type",
+        "title",
+        "status",
+        "error"
+      ],
+      "expectedResponse": {
+        "type": "about:blank",
+        "title": "Not Found",
+        "status": 404,
+        "error": "not found"
+      },
+      "expectedRows": {
+        "sightings": [],
+        "presence": []
+      }
+    },
+    {
+      "name": "method-not-allowed",
+      "description": "GET on a POST route: 405 with an Allow header naming POST, nothing stored.",
+      "serverNow": 1794160000.0,
+      "given": {
+        "rev": 0,
+        "rows": {
+          "sightings": [],
+          "presence": []
+        },
+        "priorRequests": 0
+      },
+      "request": {
+        "method": "GET",
+        "path": "/v1/sync",
+        "headers": {
+          "Authorization": "Bearer gs1_alpha001_Qm9vdHN0cmFwVGVzdEtleUFscGhhMDAx",
+          "Content-Type": "application/json",
+          "X-Client-Version": "0.9.0"
+        }
+      },
+      "expectedStatus": 405,
+      "expectedResponseKeys": [
+        "type",
+        "title",
+        "status",
+        "error"
+      ],
+      "expectedResponse": {
+        "type": "about:blank",
+        "title": "Method Not Allowed",
+        "status": 405,
+        "error": "method not allowed"
+      },
+      "expectedRows": {
+        "sightings": [],
+        "presence": []
+      },
+      "expectedHeaders": [
+        "Allow"
+      ]
+    },
+    {
+      "name": "wrong-content-type",
+      "description": "a valid key with a body that is not sent as application/json: 415, nothing stored.",
+      "serverNow": 1794160000.0,
+      "given": {
+        "rev": 0,
+        "rows": {
+          "sightings": [],
+          "presence": []
+        },
+        "priorRequests": 0
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1/sync",
+        "headers": {
+          "Authorization": "Bearer gs1_alpha001_Qm9vdHN0cmFwVGVzdEtleUFscGhhMDAx",
+          "Content-Type": "text/plain",
+          "X-Client-Version": "0.9.0"
+        },
+        "body": {
+          "since": 0,
+          "sentAt": 1794159999.0,
+          "identity": {
+            "characterName": "Paul Test",
+            "characterId": 1001,
+            "battlegroupId": "prd-srv-test-alpha-erg"
+          },
+          "partition": {
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07"
+          },
+          "position": {
+            "x": 120000.0,
+            "y": -650000.0,
+            "z": 1400.0,
+            "observedAt": 1794159997.0
+          },
+          "records": [
+            {
+              "cls": "spice",
+              "type": "spicefieldlarge",
+              "x": 123456.0,
+              "y": -654321.0,
+              "z": 1500.0,
+              "observedAt": 1794159969.0,
+              "fill": 0.8,
+              "size": "large",
+              "rowKey": null,
+              "distCm": null
+            }
+          ]
+        }
+      },
+      "expectedStatus": 415,
+      "expectedResponseKeys": [
+        "type",
+        "title",
+        "status",
+        "error",
+        "detail"
+      ],
+      "expectedResponse": {
+        "type": "about:blank",
+        "title": "Unsupported Media Type",
+        "status": 415,
+        "error": "unsupported media type",
+        "detail": "Send the body as application/json."
+      },
+      "expectedRows": {
+        "sightings": [],
+        "presence": []
+      }
+    },
+    {
+      "name": "non-finite-number",
+      "description": "sentAt is NaN (Python's json module accepts it by default; the server must not): 400 naming the field, nothing stored.",
+      "serverNow": 1794160000.0,
+      "given": {
+        "rev": 0,
+        "rows": {
+          "sightings": [],
+          "presence": []
+        },
+        "priorRequests": 0
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1/sync",
+        "headers": {
+          "Authorization": "Bearer gs1_alpha001_Qm9vdHN0cmFwVGVzdEtleUFscGhhMDAx",
+          "Content-Type": "application/json",
+          "X-Client-Version": "0.9.0"
+        },
+        "rawBody": "{\"since\": 0, \"sentAt\": NaN, \"identity\": {\"characterName\": \"Paul Test\", \"characterId\": 1001, \"battlegroupId\": \"prd-srv-test-alpha-erg\"}, \"partition\": {\"worldId\": \"deepdesert_1\", \"layout\": \"deepdesert_1_07\"}, \"position\": null, \"records\": []}"
+      },
+      "expectedStatus": 400,
+      "expectedResponseKeys": [
+        "type",
+        "title",
+        "status",
+        "error",
+        "detail",
+        "field"
+      ],
+      "expectedResponse": {
+        "type": "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.mdinvalid-field",
+        "title": "Request body is invalid",
+        "status": 400,
+        "error": "bad request",
+        "detail": "sentAt is missing, unknown or out of range",
+        "field": "sentAt"
+      },
+      "expectedRows": {
+        "sightings": [],
+        "presence": []
+      }
+    },
+    {
+      "name": "too-many-records",
+      "description": "201 records (the limit is 200): 400 naming records, nothing stored.",
+      "serverNow": 1794160000.0,
+      "given": {
+        "rev": 0,
+        "rows": {
+          "sightings": [],
+          "presence": []
+        },
+        "priorRequests": 0
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1/sync",
+        "headers": {
+          "Authorization": "Bearer gs1_alpha001_Qm9vdHN0cmFwVGVzdEtleUFscGhhMDAx",
+          "Content-Type": "application/json",
+          "X-Client-Version": "0.9.0"
+        },
+        "body": {
+          "since": 0,
+          "sentAt": 1794160000.0,
+          "identity": {
+            "characterName": "Paul Test",
+            "characterId": 1001,
+            "battlegroupId": "prd-srv-test-alpha-erg"
+          },
+          "partition": {
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07"
+          },
+          "position": null,
+          "records": [
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 2000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 4000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 6000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 8000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 10000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 12000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 14000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 16000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 18000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 20000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 22000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 24000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 26000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 28000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 30000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 32000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 34000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 36000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 38000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 40000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 42000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 44000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 46000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 48000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 50000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 52000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 54000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 56000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 58000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 60000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 62000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 64000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 66000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 68000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 70000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 72000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 74000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 76000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 78000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 80000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 82000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 84000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 86000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 88000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 90000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 92000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 94000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 96000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 98000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 100000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 102000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 104000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 106000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 108000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 110000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 112000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 114000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 116000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 118000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 120000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 122000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 124000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 126000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 128000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 130000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 132000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 134000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 136000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 138000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 140000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 142000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 144000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 146000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 148000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 150000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 152000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 154000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 156000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 158000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 160000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 162000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 164000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 166000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 168000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 170000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 172000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 174000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 176000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 178000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 180000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 182000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 184000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 186000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 188000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 190000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 192000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 194000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 196000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 198000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 200000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 202000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 204000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 206000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 208000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 210000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 212000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 214000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 216000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 218000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 220000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 222000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 224000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 226000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 228000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 230000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 232000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 234000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 236000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 238000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 240000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 242000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 244000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 246000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 248000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 250000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 252000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 254000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 256000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 258000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 260000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 262000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 264000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 266000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 268000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 270000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 272000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 274000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 276000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 278000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 280000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 282000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 284000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 286000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 288000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 290000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 292000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 294000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 296000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 298000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 300000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 302000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 304000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 306000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 308000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 310000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 312000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 314000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 316000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 318000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 320000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 322000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 324000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 326000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 328000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 330000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 332000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 334000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 336000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 338000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 340000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 342000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 344000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 346000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 348000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 350000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 352000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 354000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 356000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 358000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 360000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 362000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 364000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 366000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 368000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 370000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 372000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 374000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 376000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 378000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 380000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 382000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 384000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 386000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 388000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 390000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 392000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 394000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 396000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 398000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            },
+            {
+              "cls": "mined",
+              "type": "magnetiteore",
+              "x": 400000.0,
+              "y": 0.0,
+              "z": 0.0,
+              "observedAt": 1794159999.0,
+              "fill": null,
+              "size": null,
+              "rowKey": null,
+              "distCm": null
+            }
+          ]
+        }
+      },
+      "expectedStatus": 400,
+      "expectedResponseKeys": [
+        "type",
+        "title",
+        "status",
+        "error",
+        "detail",
+        "field"
+      ],
+      "expectedResponse": {
+        "type": "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.mdinvalid-field",
+        "title": "Request body is invalid",
+        "status": 400,
+        "error": "bad request",
+        "detail": "records is missing, unknown or out of range",
+        "field": "records"
+      },
+      "expectedRows": {
+        "sightings": [],
+        "presence": []
+      }
+    },
+    {
+      "name": "page-limit",
+      "description": "given.fillerSightings holds 501 rows in the caller's partition: one response returns only the first 500 (rev 1-500) and next = 500, so the client polls again for the rest.",
+      "serverNow": 1794160010.0,
+      "given": {
+        "rev": 501,
+        "rows": {
+          "sightings": [],
+          "presence": []
+        },
+        "priorRequests": 0,
+        "fillerSightings": {
+          "count": 501,
+          "template": {
+            "battlegroupId": "prd-srv-test-alpha-erg",
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07",
+            "cls": "mined",
+            "type": "magnetiteore",
+            "cellX": 0,
+            "cellY": 0,
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0,
+            "fill": null,
+            "size": null,
+            "rowKey": null,
+            "distCm": null,
+            "observedAt": 1794159900.0,
+            "receivedAt": 1794159900.0,
+            "lag": 0.0,
+            "observerKey": "bravo002",
+            "observerName": "Chani Test",
+            "observers": [
+              "bravo002"
+            ],
+            "rev": 0
+          },
+          "vary": "row i (1..501) = template with rev = i, x = i * 2000.0, cellX = i"
+        }
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1/sync",
+        "headers": {
+          "Authorization": "Bearer gs1_alpha001_Qm9vdHN0cmFwVGVzdEtleUFscGhhMDAx",
+          "Content-Type": "application/json",
+          "X-Client-Version": "0.9.0"
+        },
+        "body": {
+          "since": 0,
+          "sentAt": 1794160010.0,
+          "identity": {
+            "characterName": "Paul Test",
+            "characterId": 1001,
+            "battlegroupId": "prd-srv-test-alpha-erg"
+          },
+          "partition": {
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07"
+          },
+          "position": null,
+          "records": []
+        }
+      },
+      "expectedStatus": 200,
+      "expectedResponseKeys": [
+        "now",
+        "next",
+        "keyState",
+        "presence",
+        "sightings"
+      ],
+      "expectedResponse": {
+        "now": 1794160010.0,
+        "next": 500,
+        "keyState": "valid",
+        "presence": []
+      },
+      "expectedSightings": {
+        "count": 500,
+        "firstRev": 1,
+        "lastRev": 500
+      },
+      "expectedRows": {
+        "presence": [
+          {
+            "keyId": "alpha001",
+            "characterId": 1001,
+            "characterName": "Paul Test",
+            "battlegroupId": "prd-srv-test-alpha-erg",
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07",
+            "x": null,
+            "y": null,
+            "z": null,
+            "receivedAt": 1794160010.0,
+            "lag": 0.0
+          }
+        ]
+      }
+    },
+    {
+      "name": "presence-leaving",
+      "description": "presence (optional, /v1 additive): the caller says goodbye with leaving true; nextS 900 is clamped to 600. States come from server time only: Chani promised 15 s and was last heard 100 s ago (past deadline + grace + 2 x nextS: offline); Leto synced 10 s ago from a menu (in_menu).",
+      "serverNow": 1794160100.0,
+      "given": {
+        "rev": 0,
+        "rows": {
+          "sightings": [],
+          "presence": [
+            {
+              "keyId": "bravo002",
+              "characterId": 1002,
+              "characterName": "Chani Test",
+              "battlegroupId": "prd-srv-test-alpha-erg",
+              "worldId": "deepdesert_1",
+              "layout": "deepdesert_1_07",
+              "x": 51000.0,
+              "y": 71000.0,
+              "z": 900.0,
+              "receivedAt": 1794160000.0,
+              "lag": 1.0,
+              "nextS": 15.0,
+              "inGame": 1,
+              "leftAt": null
+            },
+            {
+              "keyId": "charl003",
+              "characterId": 1003,
+              "characterName": "Leto Test",
+              "battlegroupId": "prd-srv-test-alpha-erg",
+              "worldId": "deepdesert_1",
+              "layout": "deepdesert_1_07",
+              "x": null,
+              "y": null,
+              "z": null,
+              "receivedAt": 1794160090.0,
+              "lag": 0.0,
+              "nextS": 180.0,
+              "inGame": 0,
+              "leftAt": null
+            }
+          ]
+        },
+        "priorRequests": 0
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1/sync",
+        "headers": {
+          "Authorization": "Bearer gs1_alpha001_Qm9vdHN0cmFwVGVzdEtleUFscGhhMDAx",
+          "Content-Type": "application/json",
+          "X-Client-Version": "0.9.0"
+        },
+        "body": {
+          "since": 0,
+          "sentAt": 1794155100.0,
+          "identity": {
+            "characterName": "Paul Test",
+            "characterId": 1001,
+            "battlegroupId": "prd-srv-test-alpha-erg"
+          },
+          "partition": {
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07"
+          },
+          "position": null,
+          "records": [],
+          "presence": {
+            "nextS": 900,
+            "inGame": true,
+            "leaving": true
+          }
+        }
+      },
+      "expectedStatus": 200,
+      "expectedResponseKeys": [
+        "now",
+        "next",
+        "keyState",
+        "presence",
+        "sightings"
+      ],
+      "expectedResponse": {
+        "now": 1794160100.0,
+        "next": 0,
+        "keyState": "valid",
+        "presence": [
+          {
+            "characterName": "Chani Test",
+            "characterId": 1002,
+            "battlegroupId": "prd-srv-test-alpha-erg",
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07",
+            "x": 51000.0,
+            "y": 71000.0,
+            "z": 900.0,
+            "ageS": 101.0,
+            "keyId": "bravo002",
+            "state": "offline",
+            "lastNextS": 15.0
+          },
+          {
+            "characterName": "Leto Test",
+            "characterId": 1003,
+            "battlegroupId": "prd-srv-test-alpha-erg",
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07",
+            "x": null,
+            "y": null,
+            "z": null,
+            "ageS": 10.0,
+            "keyId": "charl003",
+            "state": "in_menu",
+            "lastNextS": 180.0
+          }
+        ],
+        "sightings": []
+      },
+      "expectedRows": {
+        "presence": [
+          {
+            "keyId": "alpha001",
+            "characterId": 1001,
+            "receivedAt": 1794160100.0,
+            "nextS": 600.0,
+            "inGame": 1,
+            "leftAt": 1794160100.0
+          },
+          {
+            "keyId": "bravo002",
+            "characterId": 1002
+          },
+          {
+            "keyId": "charl003",
+            "characterId": 1003
+          }
+        ]
+      }
+    },
+    {
+      "name": "presence-bad-flag",
+      "description": "presence.inGame must be a JSON boolean: 1 is refused with 400 naming the field; nothing stored.",
+      "serverNow": 1794160000.0,
+      "given": {
+        "rev": 0,
+        "rows": {
+          "sightings": [],
+          "presence": []
+        },
+        "priorRequests": 0
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1/sync",
+        "headers": {
+          "Authorization": "Bearer gs1_alpha001_Qm9vdHN0cmFwVGVzdEtleUFscGhhMDAx",
+          "Content-Type": "application/json",
+          "X-Client-Version": "0.9.0"
+        },
+        "body": {
+          "since": 0,
+          "sentAt": 1794160000.0,
+          "identity": {
+            "characterName": "Paul Test",
+            "characterId": 1001,
+            "battlegroupId": "prd-srv-test-alpha-erg"
+          },
+          "partition": {
+            "worldId": "deepdesert_1",
+            "layout": "deepdesert_1_07"
+          },
+          "position": null,
+          "records": [],
+          "presence": {
+            "nextS": 60,
+            "inGame": 1,
+            "leaving": false
+          }
+        }
+      },
+      "expectedStatus": 400,
+      "expectedResponseKeys": [
+        "type",
+        "title",
+        "status",
+        "error",
+        "detail",
+        "field"
+      ],
+      "expectedResponse": {
+        "type": "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.mdinvalid-field",
+        "title": "Request body is invalid",
+        "status": 400,
+        "error": "bad request",
+        "detail": "presence.inGame is missing, unknown or out of range",
+        "field": "presence.inGame"
+      },
+      "expectedRows": {
+        "sightings": [],
+        "presence": []
+      }
+    },
+    {
+      "name": "profile-upload",
+      "description": "POST /v1/profile stores the caller's profile under its character id and gives it the next profile rev.",
+      "serverNow": 1794160000.0,
+      "given": {
+        "rev": 0,
+        "rows": {
+          "sightings": [],
+          "presence": []
+        },
+        "priorRequests": 0
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1/profile",
+        "headers": {
+          "Authorization": "Bearer gs1_alpha001_Qm9vdHN0cmFwVGVzdEtleUFscGhhMDAx",
+          "Content-Type": "application/json",
+          "X-Client-Version": "0.9.0"
+        },
+        "body": {
+          "identity": {
+            "characterName": "Paul Test",
+            "characterId": 1001,
+            "battlegroupId": "prd-srv-test-alpha-erg"
+          },
+          "profile": {
+            "status": {
+              "worldId": "survival_1",
+              "worldName": "Hagga Basin",
+              "activity": "Driving",
+              "inGame": true
+            },
+            "skills": {
+              "gameMode": "online",
+              "skills": [
+                [
+                  "Skill.Trooper.Rifle",
+                  3
+                ]
+              ],
+              "abilities": [
+                "Shield Wall"
+              ],
+              "techniques": []
+            },
+            "stats": null,
+            "recipes": [
+              [
+                "unique_regis_rifle",
+                3
+              ]
+            ],
+            "landsraad": null,
+            "achievements": null,
+            "session": {
+              "characterXp": 1469,
+              "specializationXp": [
+                [
+                  "Exploration",
+                  125
+                ]
+              ],
+              "dailies": [
+                "Harvest Spice"
+              ],
+              "dungeonRuns": 1,
+              "loot": [
+                [
+                  "Dolomite",
+                  36
+                ]
+              ]
+            }
+          }
+        }
+      },
+      "expectedStatus": 200,
+      "expectedResponseKeys": [
+        "ok"
+      ],
+      "expectedResponse": {
+        "ok": true
+      },
+      "expectedRows": {
+        "profiles": [
+          {
+            "characterId": 1001,
+            "keyId": "alpha001",
+            "battlegroupId": "prd-srv-test-alpha-erg",
+            "characterName": "Paul Test",
+            "updatedAt": 1794160000.0,
+            "rev": 1,
+            "profile": {
+              "status": {
+                "worldId": "survival_1",
+                "worldName": "Hagga Basin",
+                "activity": "Driving",
+                "inGame": true
+              },
+              "skills": {
+                "gameMode": "online",
+                "skills": [
+                  [
+                    "Skill.Trooper.Rifle",
+                    3
+                  ]
+                ],
+                "abilities": [
+                  "Shield Wall"
+                ],
+                "techniques": []
+              },
+              "stats": null,
+              "recipes": [
+                [
+                  "unique_regis_rifle",
+                  3
+                ]
+              ],
+              "landsraad": null,
+              "achievements": null,
+              "session": {
+                "characterXp": 1469,
+                "specializationXp": [
+                  [
+                    "Exploration",
+                    125
+                  ]
+                ],
+                "dailies": [
+                  "Harvest Spice"
+                ],
+                "dungeonRuns": 1,
+                "loot": [
+                  [
+                    "Dolomite",
+                    36
+                  ]
+                ]
+              }
+            }
+          }
+        ],
+        "sightings": [],
+        "presence": []
+      }
+    },
+    {
+      "name": "profile-same-again",
+      "description": "The same profile again keeps its rev (readers' cursors never bring it back) and only refreshes updatedAt.",
+      "serverNow": 1794160000.0,
+      "given": {
+        "rev": 0,
+        "rows": {
+          "sightings": [],
+          "presence": [],
+          "profiles": [
+            {
+              "characterId": 1001,
+              "keyId": "alpha001",
+              "battlegroupId": "prd-srv-test-alpha-erg",
+              "characterName": "Paul Test",
+              "updatedAt": 1794159400.0,
+              "rev": 1,
+              "profile": {
+                "status": {
+                  "worldId": "survival_1",
+                  "worldName": "Hagga Basin",
+                  "activity": "Driving",
+                  "inGame": true
+                },
+                "skills": {
+                  "gameMode": "online",
+                  "skills": [
+                    [
+                      "Skill.Trooper.Rifle",
+                      3
+                    ]
+                  ],
+                  "abilities": [
+                    "Shield Wall"
+                  ],
+                  "techniques": []
+                },
+                "stats": null,
+                "recipes": [
+                  [
+                    "unique_regis_rifle",
+                    3
+                  ]
+                ],
+                "landsraad": null,
+                "achievements": null,
+                "session": {
+                  "characterXp": 1469,
+                  "specializationXp": [
+                    [
+                      "Exploration",
+                      125
+                    ]
+                  ],
+                  "dailies": [
+                    "Harvest Spice"
+                  ],
+                  "dungeonRuns": 1,
+                  "loot": [
+                    [
+                      "Dolomite",
+                      36
+                    ]
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "priorRequests": 0,
+        "profileRev": 1
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1/profile",
+        "headers": {
+          "Authorization": "Bearer gs1_alpha001_Qm9vdHN0cmFwVGVzdEtleUFscGhhMDAx",
+          "Content-Type": "application/json",
+          "X-Client-Version": "0.9.0"
+        },
+        "body": {
+          "identity": {
+            "characterName": "Paul Test",
+            "characterId": 1001,
+            "battlegroupId": "prd-srv-test-alpha-erg"
+          },
+          "profile": {
+            "status": {
+              "worldId": "survival_1",
+              "worldName": "Hagga Basin",
+              "activity": "Driving",
+              "inGame": true
+            },
+            "skills": {
+              "gameMode": "online",
+              "skills": [
+                [
+                  "Skill.Trooper.Rifle",
+                  3
+                ]
+              ],
+              "abilities": [
+                "Shield Wall"
+              ],
+              "techniques": []
+            },
+            "stats": null,
+            "recipes": [
+              [
+                "unique_regis_rifle",
+                3
+              ]
+            ],
+            "landsraad": null,
+            "achievements": null,
+            "session": {
+              "characterXp": 1469,
+              "specializationXp": [
+                [
+                  "Exploration",
+                  125
+                ]
+              ],
+              "dailies": [
+                "Harvest Spice"
+              ],
+              "dungeonRuns": 1,
+              "loot": [
+                [
+                  "Dolomite",
+                  36
+                ]
+              ]
+            }
+          }
+        }
+      },
+      "expectedStatus": 200,
+      "expectedResponseKeys": [
+        "ok"
+      ],
+      "expectedResponse": {
+        "ok": true
+      },
+      "expectedRows": {
+        "profiles": [
+          {
+            "characterId": 1001,
+            "keyId": "alpha001",
+            "battlegroupId": "prd-srv-test-alpha-erg",
+            "characterName": "Paul Test",
+            "updatedAt": 1794160000.0,
+            "rev": 1,
+            "profile": {
+              "status": {
+                "worldId": "survival_1",
+                "worldName": "Hagga Basin",
+                "activity": "Driving",
+                "inGame": true
+              },
+              "skills": {
+                "gameMode": "online",
+                "skills": [
+                  [
+                    "Skill.Trooper.Rifle",
+                    3
+                  ]
+                ],
+                "abilities": [
+                  "Shield Wall"
+                ],
+                "techniques": []
+              },
+              "stats": null,
+              "recipes": [
+                [
+                  "unique_regis_rifle",
+                  3
+                ]
+              ],
+              "landsraad": null,
+              "achievements": null,
+              "session": {
+                "characterXp": 1469,
+                "specializationXp": [
+                  [
+                    "Exploration",
+                    125
+                  ]
+                ],
+                "dailies": [
+                  "Harvest Spice"
+                ],
+                "dungeonRuns": 1,
+                "loot": [
+                  [
+                    "Dolomite",
+                    36
+                  ]
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "profile-delete",
+      "description": "profile null deletes the caller's stored profile: the next /v1/profiles no longer lists it.",
+      "serverNow": 1794160000.0,
+      "given": {
+        "rev": 0,
+        "rows": {
+          "sightings": [],
+          "presence": [],
+          "profiles": [
+            {
+              "characterId": 1001,
+              "keyId": "alpha001",
+              "battlegroupId": "prd-srv-test-alpha-erg",
+              "characterName": "Paul Test",
+              "updatedAt": 1794159400.0,
+              "rev": 1,
+              "profile": {
+                "status": {
+                  "worldId": "survival_1",
+                  "worldName": "Hagga Basin",
+                  "activity": "Driving",
+                  "inGame": true
+                },
+                "skills": {
+                  "gameMode": "online",
+                  "skills": [
+                    [
+                      "Skill.Trooper.Rifle",
+                      3
+                    ]
+                  ],
+                  "abilities": [
+                    "Shield Wall"
+                  ],
+                  "techniques": []
+                },
+                "stats": null,
+                "recipes": [
+                  [
+                    "unique_regis_rifle",
+                    3
+                  ]
+                ],
+                "landsraad": null,
+                "achievements": null,
+                "session": {
+                  "characterXp": 1469,
+                  "specializationXp": [
+                    [
+                      "Exploration",
+                      125
+                    ]
+                  ],
+                  "dailies": [
+                    "Harvest Spice"
+                  ],
+                  "dungeonRuns": 1,
+                  "loot": [
+                    [
+                      "Dolomite",
+                      36
+                    ]
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "priorRequests": 0,
+        "profileRev": 1
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1/profile",
+        "headers": {
+          "Authorization": "Bearer gs1_alpha001_Qm9vdHN0cmFwVGVzdEtleUFscGhhMDAx",
+          "Content-Type": "application/json",
+          "X-Client-Version": "0.9.0"
+        },
+        "body": {
+          "identity": {
+            "characterName": "Paul Test",
+            "characterId": 1001,
+            "battlegroupId": "prd-srv-test-alpha-erg"
+          },
+          "profile": null
+        }
+      },
+      "expectedStatus": 200,
+      "expectedResponseKeys": [
+        "ok"
+      ],
+      "expectedResponse": {
+        "ok": true
+      },
+      "expectedRows": {
+        "profiles": []
+      }
+    },
+    {
+      "name": "profiles-fetch",
+      "description": "POST /v1/profiles returns the battlegroup's profiles with rev > since (unchanged ones are not re-sent) and every listed character id. Each row carries playerTag: the same opaque 8-hex tag for every character of one key (HMAC-SHA256 of the key id under the stored secret hash), never the key id or the admin's label.",
+      "serverNow": 1794160000.0,
+      "given": {
+        "rev": 0,
+        "rows": {
+          "sightings": [],
+          "presence": [],
+          "profiles": [
+            {
+              "characterId": 1001,
+              "keyId": "alpha001",
+              "battlegroupId": "prd-srv-test-alpha-erg",
+              "characterName": "Paul Test",
+              "updatedAt": 1794159100.0,
+              "rev": 1,
+              "profile": {
+                "status": {
+                  "worldId": "survival_1",
+                  "worldName": "Hagga Basin",
+                  "activity": "Driving",
+                  "inGame": true
+                },
+                "skills": {
+                  "gameMode": "online",
+                  "skills": [
+                    [
+                      "Skill.Trooper.Rifle",
+                      3
+                    ]
+                  ],
+                  "abilities": [
+                    "Shield Wall"
+                  ],
+                  "techniques": []
+                },
+                "stats": null,
+                "recipes": [
+                  [
+                    "unique_regis_rifle",
+                    3
+                  ]
+                ],
+                "landsraad": null,
+                "achievements": null,
+                "session": {
+                  "characterXp": 1469,
+                  "specializationXp": [
+                    [
+                      "Exploration",
+                      125
+                    ]
+                  ],
+                  "dailies": [
+                    "Harvest Spice"
+                  ],
+                  "dungeonRuns": 1,
+                  "loot": [
+                    [
+                      "Dolomite",
+                      36
+                    ]
+                  ]
+                }
+              }
+            },
+            {
+              "characterId": 1002,
+              "keyId": "bravo002",
+              "battlegroupId": "prd-srv-test-alpha-erg",
+              "characterName": "Chani Test",
+              "updatedAt": 1794159400.0,
+              "rev": 2,
+              "profile": {
+                "status": {
+                  "worldId": "survival_1",
+                  "worldName": "Hagga Basin",
+                  "activity": "Crafting",
+                  "inGame": true
+                },
+                "skills": null,
+                "stats": null,
+                "recipes": null,
+                "landsraad": null,
+                "achievements": null,
+                "session": null
+              }
+            },
+            {
+              "characterId": 2001,
+              "keyId": "charl003",
+              "battlegroupId": "prd-srv-test-other-erg",
+              "characterName": "Feyd Test",
+              "updatedAt": 1794159700.0,
+              "rev": 3,
+              "profile": {
+                "status": {
+                  "worldId": "survival_1",
+                  "worldName": "Hagga Basin",
+                  "activity": "Crafting",
+                  "inGame": true
+                },
+                "skills": null,
+                "stats": null,
+                "recipes": null,
+                "landsraad": null,
+                "achievements": null,
+                "session": null
+              }
+            }
+          ]
+        },
+        "priorRequests": 0,
+        "profileRev": 3
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1/profiles",
+        "headers": {
+          "Authorization": "Bearer gs1_alpha001_Qm9vdHN0cmFwVGVzdEtleUFscGhhMDAx",
+          "Content-Type": "application/json",
+          "X-Client-Version": "0.9.0"
+        },
+        "body": {
+          "identity": {
+            "characterName": "Paul Test",
+            "characterId": 1001,
+            "battlegroupId": "prd-srv-test-alpha-erg"
+          },
+          "since": 1
+        }
+      },
+      "expectedStatus": 200,
+      "expectedResponseKeys": [
+        "now",
+        "next",
+        "ids",
+        "profiles"
+      ],
+      "expectedResponse": {
+        "now": 1794160000.0,
+        "next": 3,
+        "ids": [
+          1001,
+          1002
+        ],
+        "profiles": [
+          {
+            "characterId": 1002,
+            "characterName": "Chani Test",
+            "rev": 2,
+            "ageS": 600.0,
+            "profile": {
+              "status": {
+                "worldId": "survival_1",
+                "worldName": "Hagga Basin",
+                "activity": "Crafting",
+                "inGame": true
+              },
+              "skills": null,
+              "stats": null,
+              "recipes": null,
+              "landsraad": null,
+              "achievements": null,
+              "session": null
+            },
+            "playerTag": "6292d5d9"
+          }
+        ]
+      },
+      "expectedRows": {}
+    },
+    {
+      "name": "profile-unknown-field",
+      "description": "A profile field outside the contract (here a currency in the session part) is refused and nothing is stored.",
+      "serverNow": 1794160000.0,
+      "given": {
+        "rev": 0,
+        "rows": {
+          "sightings": [],
+          "presence": []
+        },
+        "priorRequests": 0
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1/profile",
+        "headers": {
+          "Authorization": "Bearer gs1_alpha001_Qm9vdHN0cmFwVGVzdEtleUFscGhhMDAx",
+          "Content-Type": "application/json",
+          "X-Client-Version": "0.9.0"
+        },
+        "body": {
+          "identity": {
+            "characterName": "Paul Test",
+            "characterId": 1001,
+            "battlegroupId": "prd-srv-test-alpha-erg"
+          },
+          "profile": {
+            "status": {
+              "worldId": "survival_1",
+              "worldName": "Hagga Basin",
+              "activity": "Driving",
+              "inGame": true
+            },
+            "skills": {
+              "gameMode": "online",
+              "skills": [
+                [
+                  "Skill.Trooper.Rifle",
+                  3
+                ]
+              ],
+              "abilities": [
+                "Shield Wall"
+              ],
+              "techniques": []
+            },
+            "stats": null,
+            "recipes": [
+              [
+                "unique_regis_rifle",
+                3
+              ]
+            ],
+            "landsraad": null,
+            "achievements": null,
+            "session": {
+              "characterXp": 1469,
+              "specializationXp": [
+                [
+                  "Exploration",
+                  125
+                ]
+              ],
+              "dailies": [
+                "Harvest Spice"
+              ],
+              "dungeonRuns": 1,
+              "loot": [
+                [
+                  "Dolomite",
+                  36
+                ]
+              ],
+              "currencies": [
+                [
+                  "Solari",
+                  98765
+                ]
+              ]
+            }
+          }
+        }
+      },
+      "expectedStatus": 400,
+      "expectedResponseKeys": [
+        "type",
+        "title",
+        "status",
+        "error",
+        "detail",
+        "field"
+      ],
+      "expectedResponse": {
+        "type": "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.mdinvalid-field",
+        "title": "Request body is invalid",
+        "status": 400,
+        "error": "bad request",
+        "detail": "profile.session.currencies is missing, unknown or out of range",
+        "field": "profile.session.currencies"
+      },
+      "expectedRows": {
+        "profiles": []
+      }
+    }
+  ]
+}

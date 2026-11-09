@@ -1,0 +1,4 @@
+{"t":1794096763.448,"type":"topicReset","topic":"dune.trackedSession","payload":null}
+{"t":1794096763.45,"type":"delta","topic":"dune.trackedSession","payload":{"sessionId":"00000000000000000000000000000000","isActive":true,"activeSeconds":0,"currencies":[],"loot":[]}}
+{"t":1794096764.211,"type":"delta","topic":"dune.trackedSession","payload":{"characterId":10000001,"battlegroupId":"prd-srv-test-home-erg","sessionId":"00000000000000000000000000000000","isActive":true,"activeSeconds":0.8959892,"currencies":[],"loot":[]}}
+{"t":1794096814.261,"type":"delta","topic":"dune.trackedSession","payload":{"characterName":"Leto Test","characterId":10000001,"battlegroupId":"prd-srv-test-home-erg","sessionId":"00000000000000000000000000000000","isActive":true,"activeSeconds":28.8110728,"currencies":[],"loot":[]}}

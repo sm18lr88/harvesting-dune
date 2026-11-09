@@ -1,0 +1,1597 @@
+{
+  "openapi": "3.2.1",
+  "info": {
+    "title": "Guild sync",
+    "version": "1",
+    "summary": "Shares finds and positions between the detectors of one guild.",
+    "description": "Contract: docs/SYNC-PROTOCOL.md. Internal partner API for one guild: admin-issued keys, no browsers, no money. /v1 stays compatible; see \"Changing the contract\" there.",
+    "x-format-note": "Written in JSON syntax, which is valid YAML, so the repository tests read it with the standard library."
+  },
+  "servers": [
+    {
+      "url": "https://158.69.179.64:8443",
+      "description": "The guild server. The certificate is signed by the private CA shipped with the detector."
+    }
+  ],
+  "security": [
+    {
+      "guildKey": []
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "health",
+        "summary": "Is the server up",
+        "security": [],
+        "x-public-reason": "Liveness probe for the admin and the deploy script; returns no guild data.",
+        "x-rate-limit": {
+          "limit": 10,
+          "perSeconds": 60,
+          "by": "ip",
+          "bucket": 10
+        },
+        "responses": {
+          "200": {
+            "description": "Up.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          },
+          "default": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      },
+      "head": {
+        "operationId": "healthHead",
+        "summary": "Is the server up",
+        "security": [],
+        "x-public-reason": "Liveness probe for the admin and the deploy script; returns no guild data.",
+        "x-rate-limit": {
+          "limit": 10,
+          "perSeconds": 60,
+          "by": "ip",
+          "bucket": 10
+        },
+        "responses": {
+          "200": {
+            "description": "Up. No body."
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          },
+          "default": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/v1/sync": {
+      "post": {
+        "operationId": "sync",
+        "summary": "Upload finds, get the guild's",
+        "description": "Upserts the caller's presence and records (each keyed by its 20 m cell; a retry changes nothing but the row's rev), then returns the battlegroup's presence and the partition's sightings after `since`. Safe to retry: no Idempotency-Key needed.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ClientVersion"
+          },
+          {
+            "$ref": "#/components/parameters/ContentEncoding"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "At most 262144 bytes after any gzip is undone. Send Content-Encoding: gzip for bodies over 1 KiB.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SyncRequest"
+              }
+            }
+          },
+          "x-max-body-bytes": 262144
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncReply"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/CharacterOwned"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "413": {
+            "$ref": "#/components/responses/TooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMedia"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          },
+          "default": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "x-rate-limit": {
+          "limit": 30,
+          "perSeconds": 60,
+          "by": "key",
+          "bucket": 30,
+          "note": "Requests without a valid key count against the IP limit (10 a minute) instead."
+        }
+      }
+    },
+    "/v1/profile": {
+      "post": {
+        "operationId": "profile",
+        "summary": "Store or delete the caller's character profile",
+        "description": "One row per character id; the same profile again keeps its rev; profile null deletes it. Only the key that owns the character may write it. Safe to retry.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ClientVersion"
+          },
+          {
+            "$ref": "#/components/parameters/ContentEncoding"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "At most 262144 bytes after any gzip is undone. Send Content-Encoding: gzip for bodies over 1 KiB.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfileUpload"
+              }
+            }
+          },
+          "x-max-body-bytes": 262144
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ok"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/CharacterOwned"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "413": {
+            "$ref": "#/components/responses/TooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMedia"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          },
+          "default": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "x-rate-limit": {
+          "limit": 30,
+          "perSeconds": 60,
+          "by": "key",
+          "bucket": 30,
+          "note": "Requests without a valid key count against the IP limit (10 a minute) instead."
+        }
+      }
+    },
+    "/v1/profiles": {
+      "post": {
+        "operationId": "profiles",
+        "summary": "The battlegroup's profiles that changed",
+        "description": "Read only (POST because the request has a body). Returns profiles of the battlegroup in `identity` with rev > since, and every character id that has a profile.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ClientVersion"
+          },
+          {
+            "$ref": "#/components/parameters/ContentEncoding"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "At most 262144 bytes after any gzip is undone. Send Content-Encoding: gzip for bodies over 1 KiB.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfilesRequest"
+              }
+            }
+          },
+          "x-max-body-bytes": 262144
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfilesReply"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "413": {
+            "$ref": "#/components/responses/TooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMedia"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          },
+          "default": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "x-rate-limit": {
+          "limit": 30,
+          "perSeconds": 60,
+          "by": "key",
+          "bucket": 30,
+          "note": "Requests without a valid key count against the IP limit (10 a minute) instead."
+        }
+      }
+    },
+    "/v1/data": {
+      "get": {
+        "operationId": "listDatasets",
+        "summary": "The datasets this key may fetch",
+        "description": "For the client's daily check: the name, ETag and size of each served dataset, by name, a page at a time. Fetch a dataset only when its etag differs from the cached one. A query parameter other than limit and after gets 404 (a key never goes in a URL). Read only. The reply carries Cache-Control: no-store.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 100
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "description": "The `next` of the previous page; leave it out for the first page.",
+            "schema": {
+              "type": "string",
+              "maxLength": 32,
+              "pattern": "^[a-z0-9-]{0,32}$"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/ClientVersion"
+          }
+        ],
+        "x-rate-limit": {
+          "limit": 30,
+          "perSeconds": 60,
+          "by": "key",
+          "bucket": 30,
+          "note": "The same per-key bucket as /v1/sync. Requests without a valid key count against the IP limit (10 a minute) instead."
+        },
+        "responses": {
+          "200": {
+            "description": "The served datasets, by name.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatasetList"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          },
+          "default": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      },
+      "head": {
+        "operationId": "listDatasetsHead",
+        "summary": "The datasets this key may fetch (headers only)",
+        "description": "For the client's daily check: the name, ETag and size of each served dataset, by name, a page at a time. Fetch a dataset only when its etag differs from the cached one. A query parameter other than limit and after gets 404 (a key never goes in a URL). Read only. The reply carries Cache-Control: no-store.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 100
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "description": "The `next` of the previous page; leave it out for the first page.",
+            "schema": {
+              "type": "string",
+              "maxLength": 32,
+              "pattern": "^[a-z0-9-]{0,32}$"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/ClientVersion"
+          }
+        ],
+        "x-rate-limit": {
+          "limit": 30,
+          "perSeconds": 60,
+          "by": "key",
+          "bucket": 30,
+          "note": "The same per-key bucket as /v1/sync. Requests without a valid key count against the IP limit (10 a minute) instead."
+        },
+        "responses": {
+          "200": {
+            "description": "The same headers as GET. No body."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          },
+          "default": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/v1/data/{name}": {
+      "get": {
+        "operationId": "getDataset",
+        "summary": "One dataset",
+        "description": "The file's JSON as stored on the server, at most 4194304 bytes. Check at most once a day and on start; send If-None-Match with the cached ETag.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "description": "The dataset name. Anything else, including dots, slashes, backslashes and percent escapes, gets 404. The server never URL-decodes it.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32,
+              "pattern": "^[a-z0-9-]{1,32}$"
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "required": false,
+            "description": "The ETag of the cached copy (or a list of them, or *). A match gets 304 with no body.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Accept-Encoding",
+            "in": "header",
+            "required": false,
+            "description": "With gzip, a body over 1 KiB comes gzipped (Content-Encoding: gzip).",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/ClientVersion"
+          }
+        ],
+        "x-rate-limit": {
+          "limit": 30,
+          "perSeconds": 60,
+          "by": "key",
+          "bucket": 30,
+          "note": "The same per-key bucket as /v1/sync. Requests without a valid key count against the IP limit (10 a minute) instead."
+        },
+        "x-max-dataset-bytes": 4194304,
+        "responses": {
+          "200": {
+            "description": "The dataset.",
+            "headers": {
+              "ETag": {
+                "description": "Strong: the quoted sha256 hex of the uncompressed dataset bytes. The same for the gzip and the plain reply.",
+                "schema": {
+                  "type": "string",
+                  "pattern": "^\"[0-9a-f]{64}\"$"
+                }
+              },
+              "Cache-Control": {
+                "description": "Always `private`.",
+                "schema": {
+                  "type": "string",
+                  "const": "private"
+                }
+              },
+              "Vary": {
+                "description": "Always `Accept-Encoding`.",
+                "schema": {
+                  "type": "string",
+                  "const": "Accept-Encoding"
+                }
+              },
+              "Content-Encoding": {
+                "description": "`gzip` when the client accepts it and the body is over 1 KiB.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "gzip"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Dataset"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "If-None-Match matched: the cached copy is current. No body.",
+            "headers": {
+              "ETag": {
+                "description": "Strong: the quoted sha256 hex of the uncompressed dataset bytes. The same for the gzip and the plain reply.",
+                "schema": {
+                  "type": "string",
+                  "pattern": "^\"[0-9a-f]{64}\"$"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NoDataset"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          },
+          "default": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      },
+      "head": {
+        "operationId": "getDatasetHead",
+        "summary": "One dataset (headers only)",
+        "description": "The file's JSON as stored on the server, at most 4194304 bytes. Check at most once a day and on start; send If-None-Match with the cached ETag.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "description": "The dataset name. Anything else, including dots, slashes, backslashes and percent escapes, gets 404. The server never URL-decodes it.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32,
+              "pattern": "^[a-z0-9-]{1,32}$"
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "required": false,
+            "description": "The ETag of the cached copy (or a list of them, or *). A match gets 304 with no body.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Accept-Encoding",
+            "in": "header",
+            "required": false,
+            "description": "With gzip, a body over 1 KiB comes gzipped (Content-Encoding: gzip).",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/ClientVersion"
+          }
+        ],
+        "x-rate-limit": {
+          "limit": 30,
+          "perSeconds": 60,
+          "by": "key",
+          "bucket": 30,
+          "note": "The same per-key bucket as /v1/sync. Requests without a valid key count against the IP limit (10 a minute) instead."
+        },
+        "x-max-dataset-bytes": 4194304,
+        "responses": {
+          "200": {
+            "description": "The same headers as GET. No body.",
+            "headers": {
+              "ETag": {
+                "description": "Strong: the quoted sha256 hex of the uncompressed dataset bytes. The same for the gzip and the plain reply.",
+                "schema": {
+                  "type": "string",
+                  "pattern": "^\"[0-9a-f]{64}\"$"
+                }
+              },
+              "Cache-Control": {
+                "description": "Always `private`.",
+                "schema": {
+                  "type": "string",
+                  "const": "private"
+                }
+              },
+              "Vary": {
+                "description": "Always `Accept-Encoding`.",
+                "schema": {
+                  "type": "string",
+                  "const": "Accept-Encoding"
+                }
+              },
+              "Content-Encoding": {
+                "description": "`gzip` when the client accepts it and the body is over 1 KiB.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "gzip"
+                  ]
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "If-None-Match matched: the cached copy is current. No body.",
+            "headers": {
+              "ETag": {
+                "description": "Strong: the quoted sha256 hex of the uncompressed dataset bytes. The same for the gzip and the plain reply.",
+                "schema": {
+                  "type": "string",
+                  "pattern": "^\"[0-9a-f]{64}\"$"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NoDataset"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          },
+          "default": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "guildKey": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "gs1_<keyid>_<secret>",
+        "description": "An opaque per-player key issued by the admin (keysctl). The server stores only sha256(secret). Never send it in a URL. A regular key expires after 30 days without use; at most 64 regular keys are active at once."
+      }
+    },
+    "parameters": {
+      "ClientVersion": {
+        "name": "X-Client-Version",
+        "in": "header",
+        "required": false,
+        "description": "The detector version. Logged (first 32 characters) so the admin sees which versions still call a route.",
+        "schema": {
+          "type": "string",
+          "maxLength": 64
+        }
+      },
+      "ContentEncoding": {
+        "name": "Content-Encoding",
+        "in": "header",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "enum": [
+            "gzip",
+            "identity"
+          ]
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "The body is not JSON, nests too deep, its gzip does not inflate, or a field breaks a rule. type ends in #invalid-field; `field` names the first bad field. Nothing is written.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "type ends in #invalid-key: the key is missing, unknown or revoked. type ends in #key-expired: a regular key went unused for over 30 days (the admin can renew it). Admin keys never expire. Both carry the same WWW-Authenticate header and v1 error text `invalid key`.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "headers": {
+          "WWW-Authenticate": {
+            "description": "Always `Bearer realm=\"guildsync\"`.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "CharacterOwned": {
+        "description": "type ends in #character-owned: another key owns the character in `identity`. Nothing is written.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "No such path.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        }
+      },
+      "NoDataset": {
+        "description": "No dataset by this name: the name breaks the pattern, or the file is missing, over 4194304 bytes or not JSON.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        }
+      },
+      "MethodNotAllowed": {
+        "description": "Another method on this path.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "headers": {
+          "Allow": {
+            "description": "The methods this path takes.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "TooLarge": {
+        "description": "The body is over 262144 bytes, as sent or after inflating.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        }
+      },
+      "UnsupportedMedia": {
+        "description": "Content-Type is not application/json, or Content-Encoding is not gzip.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "headers": {
+          "Accept-Encoding": {
+            "description": "`gzip`, when the encoding was refused.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "RateLimited": {
+        "description": "type ends in #rate-limited.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "headers": {
+          "Retry-After": {
+            "description": "Seconds to wait, a whole number of at least 1.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      },
+      "ServerError": {
+        "description": "A server bug. The body holds only `requestId`, also in the server log.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Identity": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "characterName",
+          "characterId",
+          "battlegroupId"
+        ],
+        "properties": {
+          "characterName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "characterId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9223372036854775807
+          },
+          "battlegroupId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9_-]{1,64}$"
+          }
+        },
+        "description": "The character from the companion. A key may write only characters it owns."
+      },
+      "Partition": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "worldId",
+          "layout"
+        ],
+        "properties": {
+          "worldId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9_-]{1,64}$"
+          },
+          "layout": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9_-]{1,64}$"
+          }
+        },
+        "description": "Where the player is. Outside the Deep Desert, layout equals worldId."
+      },
+      "Position": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "x",
+          "y",
+          "z",
+          "observedAt"
+        ],
+        "properties": {
+          "x": {
+            "type": "number",
+            "description": "Finite (no NaN or Infinity)."
+          },
+          "y": {
+            "type": "number",
+            "description": "Finite (no NaN or Infinity)."
+          },
+          "z": {
+            "type": "number",
+            "description": "Finite (no NaN or Infinity)."
+          },
+          "observedAt": {
+            "type": "number",
+            "description": "Finite (no NaN or Infinity)."
+          }
+        },
+        "description": "World centimetres; observedAt in unix seconds (client clock)."
+      },
+      "Record": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "cls",
+          "type",
+          "x",
+          "y",
+          "z",
+          "observedAt",
+          "fill",
+          "size",
+          "rowKey",
+          "distCm"
+        ],
+        "properties": {
+          "cls": {
+            "type": "string",
+            "enum": [
+              "blow",
+              "mined",
+              "ore",
+              "ship",
+              "spice",
+              "stale"
+            ]
+          },
+          "type": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-z0-9_]{1,64}$"
+          },
+          "x": {
+            "type": "number",
+            "description": "Finite (no NaN or Infinity)."
+          },
+          "y": {
+            "type": "number",
+            "description": "Finite (no NaN or Infinity)."
+          },
+          "z": {
+            "type": "number",
+            "description": "Finite (no NaN or Infinity)."
+          },
+          "observedAt": {
+            "type": "number",
+            "description": "Finite (no NaN or Infinity)."
+          },
+          "fill": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1
+          },
+          "size": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "large",
+              "medium",
+              "small",
+              null
+            ]
+          },
+          "rowKey": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "distCm": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          }
+        },
+        "description": "One strong sighting. Upserted by (battlegroupId, layout, cls, type, 20 m cell)."
+      },
+      "SyncRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "since",
+          "sentAt",
+          "identity",
+          "partition",
+          "position",
+          "records"
+        ],
+        "properties": {
+          "since": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9223372036854775807,
+            "description": "The `next` of the last good reply; 0 at first."
+          },
+          "sentAt": {
+            "type": "number",
+            "description": "Finite (no NaN or Infinity)."
+          },
+          "identity": {
+            "$ref": "#/components/schemas/Identity"
+          },
+          "partition": {
+            "$ref": "#/components/schemas/Partition"
+          },
+          "position": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Position"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "null = the player does not share a position."
+          },
+          "records": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "$ref": "#/components/schemas/Record"
+            }
+          },
+          "presence": {
+            "$ref": "#/components/schemas/PresenceBeat"
+          }
+        },
+        "description": "`presence` is optional (added in /v1): a body without it is an older client, read as nextS 60, inGame true, leaving false."
+      },
+      "PresenceBeat": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "nextS",
+          "inGame",
+          "leaving"
+        ],
+        "properties": {
+          "nextS": {
+            "type": "integer",
+            "minimum": -9223372036854775808,
+            "maximum": 9223372036854775807,
+            "x-clamp": [
+              5,
+              600
+            ],
+            "description": "Seconds until the sender's next sync (its cadence: 15, 60 or 180). The server clamps it to 5-600."
+          },
+          "inGame": {
+            "type": "boolean",
+            "description": "true while the sender is in a world; false in a menu or a loading screen."
+          },
+          "leaving": {
+            "type": "boolean",
+            "description": "true on the goodbye sync: the game or the detector closed, sync was paused, position sharing was turned off, or the key was removed."
+          }
+        },
+        "description": "The heartbeat part of a sync. JSON booleans only (0, 1 and \"true\" are refused)."
+      },
+      "PlainValue": {
+        "description": "Plain JSON: finite numbers, integers within 64 bits, text up to 200 characters, lists up to 1000 items, objects up to 100 keys of at most 64 characters, at most 6 levels below `profile`.",
+        "type": [
+          "null",
+          "boolean",
+          "number",
+          "string",
+          "array",
+          "object"
+        ],
+        "maxLength": 200,
+        "maxItems": 1000,
+        "maxProperties": 100,
+        "propertyNames": {
+          "maxLength": 64
+        },
+        "items": {
+          "$ref": "#/components/schemas/PlainValue"
+        },
+        "additionalProperties": {
+          "$ref": "#/components/schemas/PlainValue"
+        },
+        "x-max-depth": 6
+      },
+      "Session": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "characterXp",
+          "specializationXp",
+          "dailies",
+          "dungeonRuns",
+          "loot"
+        ],
+        "properties": {
+          "characterXp": {
+            "$ref": "#/components/schemas/PlainValue"
+          },
+          "specializationXp": {
+            "$ref": "#/components/schemas/PlainValue"
+          },
+          "dailies": {
+            "$ref": "#/components/schemas/PlainValue"
+          },
+          "dungeonRuns": {
+            "$ref": "#/components/schemas/PlainValue"
+          },
+          "loot": {
+            "$ref": "#/components/schemas/PlainValue"
+          }
+        }
+      },
+      "Profile": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "skills",
+          "stats",
+          "recipes",
+          "landsraad",
+          "achievements",
+          "session"
+        ],
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/PlainValue"
+          },
+          "skills": {
+            "$ref": "#/components/schemas/PlainValue"
+          },
+          "stats": {
+            "$ref": "#/components/schemas/PlainValue"
+          },
+          "recipes": {
+            "$ref": "#/components/schemas/PlainValue"
+          },
+          "landsraad": {
+            "$ref": "#/components/schemas/PlainValue"
+          },
+          "achievements": {
+            "$ref": "#/components/schemas/PlainValue"
+          },
+          "session": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Session"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "description": "At most 32768 bytes as compact JSON. Never currencies, session history or bases.",
+        "x-max-stored-bytes": 32768
+      },
+      "ProfileUpload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "identity",
+          "profile"
+        ],
+        "properties": {
+          "identity": {
+            "$ref": "#/components/schemas/Identity"
+          },
+          "profile": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Profile"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "null deletes the stored profile."
+          }
+        }
+      },
+      "ProfilesRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "identity",
+          "since"
+        ],
+        "properties": {
+          "identity": {
+            "$ref": "#/components/schemas/Identity"
+          },
+          "since": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9223372036854775807
+          }
+        }
+      },
+      "Health": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "now": {
+            "type": "number"
+          },
+          "version": {
+            "type": "string",
+            "const": "1"
+          }
+        }
+      },
+      "Member": {
+        "type": "object",
+        "description": "A guildmate that is not gone. State comes from the server clock only: deadline = last sync + lastNextS; online or in_menu until deadline + 20 s, then late for 2 x lastNextS, then offline (or offline at once after a goodbye or a revoked key) for 15 minutes, then the row is no longer sent. x, y, z are null when they hide their position.",
+        "properties": {
+          "characterName": {
+            "type": "string"
+          },
+          "characterId": {
+            "type": "integer"
+          },
+          "battlegroupId": {
+            "type": "string"
+          },
+          "worldId": {
+            "type": "string"
+          },
+          "layout": {
+            "type": "string"
+          },
+          "x": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "y": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "z": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "ageS": {
+            "type": "number"
+          },
+          "keyId": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "online",
+              "in_menu",
+              "late",
+              "offline"
+            ],
+            "description": "A client that does not know a value treats it as offline."
+          },
+          "lastNextS": {
+            "type": "number",
+            "description": "The nextS of the member's last sync (60 for an older client)."
+          }
+        }
+      },
+      "Sighting": {
+        "type": "object",
+        "description": "A stored row. `cls` is an open set: skip a class you do not know.",
+        "properties": {
+          "cls": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "x": {
+            "type": "number"
+          },
+          "y": {
+            "type": "number"
+          },
+          "z": {
+            "type": "number"
+          },
+          "fill": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "size": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rowKey": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "distCm": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "ageS": {
+            "type": "number"
+          },
+          "observerName": {
+            "type": "string"
+          },
+          "observerKey": {
+            "type": "string"
+          },
+          "observers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "rev": {
+            "type": "integer"
+          },
+          "worldId": {
+            "type": "string"
+          },
+          "layout": {
+            "type": "string"
+          }
+        }
+      },
+      "SyncReply": {
+        "type": "object",
+        "description": "New response keys may appear in /v1: ignore keys you do not know.",
+        "properties": {
+          "now": {
+            "type": "number"
+          },
+          "next": {
+            "type": "integer",
+            "description": "Send it back as `since`."
+          },
+          "keyState": {
+            "type": "string",
+            "const": "valid"
+          },
+          "presence": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Member"
+            },
+            "description": "Every member of the caller's battlegroup that is not gone, by name; never the caller. One row per character."
+          },
+          "sightings": {
+            "type": "array",
+            "maxItems": 500,
+            "items": {
+              "$ref": "#/components/schemas/Sighting"
+            },
+            "description": "rev > since in the caller's battlegroup and layout, lowest rev first. 500 rows means the list was cut: ask again at once."
+          }
+        }
+      },
+      "Ok": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          }
+        }
+      },
+      "StoredProfile": {
+        "type": "object",
+        "properties": {
+          "characterId": {
+            "type": "integer"
+          },
+          "characterName": {
+            "type": "string"
+          },
+          "rev": {
+            "type": "integer"
+          },
+          "ageS": {
+            "type": "number"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/Profile"
+          },
+          "playerTag": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}$",
+            "minLength": 8,
+            "maxLength": 8,
+            "description": "Opaque: the same for every character of one key, so a player's alts can be grouped. Never the key id or the admin's label (labels are admin-only)."
+          }
+        },
+        "description": "One character's profile. A player's alts share one playerTag. Kept 30 days after its last upload, longer while the character keeps syncing; deleted when its player stops sharing."
+      },
+      "ProfilesReply": {
+        "type": "object",
+        "description": "The list holds one profile per character of the battlegroup at most; keys are admin-issued, so it stays small.",
+        "properties": {
+          "now": {
+            "type": "number"
+          },
+          "next": {
+            "type": "integer"
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          },
+          "profiles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StoredProfile"
+            }
+          }
+        }
+      },
+      "Dataset": {
+        "description": "Any JSON value; its meaning belongs to the dataset (docs/SYNC-PROTOCOL.md \"Datasets\")."
+      },
+      "DatasetInfo": {
+        "type": "object",
+        "required": [
+          "name",
+          "etag",
+          "bytes"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9-]{1,32}$",
+            "maxLength": 32
+          },
+          "etag": {
+            "type": "string",
+            "pattern": "^\"[0-9a-f]{64}\"$",
+            "description": "The ETag header value, quotes included; send it back as If-None-Match."
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4194304,
+            "description": "Uncompressed size."
+          }
+        }
+      },
+      "DatasetList": {
+        "type": "object",
+        "description": "New keys may appear in /v1: ignore keys you do not know.",
+        "required": [
+          "datasets",
+          "next"
+        ],
+        "properties": {
+          "datasets": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/components/schemas/DatasetInfo"
+            },
+            "description": "By name. A file that is missing, too big or not JSON is left out."
+          },
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass it as `after` for the next page; null on the last page."
+          }
+        }
+      },
+      "Problem": {
+        "type": "object",
+        "description": "RFC 9457 problem details. `type` is what a program checks; `error` is the v1 text, kept for older readers.",
+        "required": [
+          "type",
+          "title",
+          "status",
+          "error"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "format": "uri-reference"
+          },
+          "title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer",
+            "minimum": 400,
+            "maximum": 599
+          },
+          "detail": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "field": {
+            "type": "string",
+            "description": "400 only: the first bad field, e.g. records[0].cls, or body."
+          },
+          "requestId": {
+            "type": "string",
+            "description": "500 only: the id next to the error in the server log."
+          }
+        },
+        "x-problem-types": [
+          "about:blank",
+          "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.mdinvalid-field",
+          "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.mdcharacter-owned",
+          "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.mdrate-limited",
+          "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.mdinvalid-key",
+          "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.mdkey-expired"
+        ]
+      }
+    }
+  }
+}

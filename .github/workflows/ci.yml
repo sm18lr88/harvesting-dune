@@ -1,0 +1,85 @@
+# CI: tests, lint and PowerShell syntax on every push and pull request.
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install
+        run: uv sync
+
+      - name: Tests (the bridge tests use the runner's Node.js)
+        run: uv run pytest -q
+
+      - name: Lint
+        run: uvx ruff check src tests server --select F,E9,B
+
+      - name: PowerShell scripts parse (Windows PowerShell 5.1, as the autorun task uses)
+        shell: powershell
+        run: |
+          $bad = 0
+          Get-ChildItem scripts\*.ps1, installer\*.ps1 | ForEach-Object {
+            $e = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$e)
+            if ($e) { Write-Error "$($_.Name): $($e -join '; ')"; $bad++ }
+          }
+          Get-ChildItem scripts\*.ps1, installer\*.ps1, *.cmd | ForEach-Object {
+            if ([IO.File]::ReadAllText($_.FullName) -match '[^\x00-\x7F]') { Write-Error "$($_.Name): non-ASCII text breaks Windows PowerShell 5.1 and cmd.exe"; $bad++ }
+          }
+          if ($bad) { exit 1 }
+
+  zip-install:
+    # the release zip as a guildmate uses it: a fresh PC without uv, a folder with a space
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the zip
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File installer\build-zip.ps1 -Version 0.0.0-ci
+
+      - name: Hide any uv on this runner
+        shell: powershell
+        run: |
+          Get-Command uv.exe, uvx.exe, uvw.exe -All -ErrorAction SilentlyContinue | ForEach-Object {
+            Rename-Item -LiteralPath $_.Source -NewName ($_.Name + '.hidden'); Write-Host "hid $($_.Source)"
+          }
+          Get-ChildItem "$env:USERPROFILE\.local\bin\uv*.exe", "$env:USERPROFILE\.cargo\bin\uv*.exe" -ErrorAction SilentlyContinue |
+            ForEach-Object { Rename-Item -LiteralPath $_.FullName -NewName ($_.Name + '.hidden'); Write-Host "hid $($_.FullName)" }
+          if (Get-Command uv.exe -ErrorAction SilentlyContinue) { throw 'uv is still on PATH' }
+
+      - name: Install, install again, uninstall
+        shell: powershell
+        env:
+          HARVESTING_DUNE_KEY: ${{ secrets.GUILD_TEST_KEY }}
+        run: powershell -ExecutionPolicy Bypass -File installer\test-zip.ps1 -Zip dist\harvesting-dune-0.0.0-ci.zip -WorkDir "$env:RUNNER_TEMP\zip test"
+
+  server-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install
+        run: uv sync
+
+      - name: Guild server tests
+        run: uv run pytest -q tests/test_sync_storage.py tests/test_sync_httpd.py tests/test_sync_server.py
