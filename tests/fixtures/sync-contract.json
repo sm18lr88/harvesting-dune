@@ -1390,7 +1390,7 @@
         "detail"
       ],
       "expectedResponse": {
-        "type": "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.mdinvalid-key",
+        "type": "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.md#invalid-key",
         "title": "Key is not valid",
         "status": 401,
         "error": "invalid key",
@@ -1449,7 +1449,7 @@
         "detail"
       ],
       "expectedResponse": {
-        "type": "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.mdinvalid-key",
+        "type": "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.md#invalid-key",
         "title": "Key is not valid",
         "status": 401,
         "error": "invalid key",
@@ -1508,7 +1508,7 @@
         "detail"
       ],
       "expectedResponse": {
-        "type": "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.mdkey-expired",
+        "type": "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.md#key-expired",
         "title": "Key expired",
         "status": 401,
         "error": "invalid key",
@@ -1609,7 +1609,7 @@
         "detail"
       ],
       "expectedResponse": {
-        "type": "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.mdrate-limited",
+        "type": "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.md#rate-limited",
         "title": "Too many requests",
         "status": 429,
         "error": "rate limited",
@@ -1696,7 +1696,7 @@
         "field"
       ],
       "expectedResponse": {
-        "type": "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.mdinvalid-field",
+        "type": "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.md#invalid-field",
         "title": "Request body is invalid",
         "status": 400,
         "error": "bad request",
@@ -1928,7 +1928,7 @@
         "field"
       ],
       "expectedResponse": {
-        "type": "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.mdinvalid-field",
+        "type": "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.md#invalid-field",
         "title": "Request body is invalid",
         "status": 400,
         "error": "bad request",
@@ -4399,7 +4399,7 @@
         "field"
       ],
       "expectedResponse": {
-        "type": "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.mdinvalid-field",
+        "type": "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.md#invalid-field",
         "title": "Request body is invalid",
         "status": 400,
         "error": "bad request",
@@ -4703,7 +4703,7 @@
         "field"
       ],
       "expectedResponse": {
-        "type": "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.mdinvalid-field",
+        "type": "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.md#invalid-field",
         "title": "Request body is invalid",
         "status": 400,
         "error": "bad request",
@@ -5435,7 +5435,7 @@
         "field"
       ],
       "expectedResponse": {
-        "type": "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.mdinvalid-field",
+        "type": "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.md#invalid-field",
         "title": "Request body is invalid",
         "status": 400,
         "error": "bad request",

@@ -223,7 +223,7 @@ The client says goodbye (`leaving: true`) when the detector stops (it waits at m
 Every answer with a status of 400 or more is a problem details object (RFC 9457), with `Content-Type: application/problem+json`:
 
 ```json
-{"type": "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.mdinvalid-field",
+{"type": "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.md#invalid-field",
  "title": "Request body is invalid", "status": 400, "error": "bad request",
  "detail": "records[0].cls is missing, unknown or out of range", "field": "records[0].cls"}
 ```
@@ -289,7 +289,7 @@ The server and the detector ship together, but guildmates update their detectors
   ```
   Deprecation: @1796083200
   Sunset: Thu, 31 Dec 2026 23:59:59 GMT
-  Link: <https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.mdchanging-the-contract>; rel="deprecation"; type="text/html"
+  Link: <https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.md#changing-the-contract>; rel="deprecation"; type="text/html"
   ```
 
   `Deprecation` (RFC 9745) is `@` and unix seconds. `Sunset` (RFC 8594) is an HTTP date, never earlier than `Deprecation`. The route is marked `deprecated: true` in `docs/sync-openapi.yaml`. The admin removes the route only when the audit log (`client` and `key` per request) shows that nobody calls it, or at the sunset date with the owner's yes. After that, the route answers 410 with a problem body that links here.

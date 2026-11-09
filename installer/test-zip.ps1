@@ -4,6 +4,8 @@
   run Install.cmd without questions and without autorun, check the detector starts, run it again
   (an update must work in place), then Uninstall.cmd. The data folder must survive the uninstall.
   -UvSources and -UvDir go to install.ps1 (a local test must not use or change the PC's own uv).
+  -LocalGuildPython <python.exe of a synced checkout>: no guild key needed. The test starts a throwaway guild server on
+  127.0.0.1 with the test certificates (tests\certs), issues a throwaway key, installs against that server, and stops it.
 #>
 param(
     [Parameter(Mandatory = $true)][string]$Zip,
@@ -11,11 +13,15 @@ param(
     [string]$UvSources = '',
     [string]$UvDir = '',
     [string]$SyncServer = '',
-    [string]$CaFile = ''
+    [string]$CaFile = '',
+    [string]$LocalGuildPython = ''
 )
 $ErrorActionPreference = 'Stop'
 # the installer needs a guild key (it reads HARVESTING_DUNE_KEY, so the key stays off the command line)
-if (-not $env:HARVESTING_DUNE_KEY) { throw 'Set HARVESTING_DUNE_KEY to a guild key first. The installer checks it with the server.' }
+if (-not $LocalGuildPython -and -not $env:HARVESTING_DUNE_KEY) { throw 'Set HARVESTING_DUNE_KEY to a guild key first, or pass -LocalGuildPython. The installer checks the key with the server.' }
+$repoRoot = Split-Path -Parent $PSScriptRoot
+$guildProc = $null
+$guildDir = ''
 $extracted = Join-Path $WorkDir 'extracted zip'
 $target = Join-Path $WorkDir 'install dir'
 if (Test-Path -LiteralPath $WorkDir) { Remove-Item -LiteralPath $WorkDir -Recurse -Force }
@@ -33,6 +39,31 @@ function Assert([bool]$ok, [string]$what) {
     Write-Host "OK: $what" -ForegroundColor Green
 }
 
+try {
+if ($LocalGuildPython) {
+    $guildDir = Join-Path ([IO.Path]::GetTempPath()) ('guild-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force -Path $guildDir | Out-Null
+    $db = Join-Path $guildDir 'guild.sqlite'
+    $listener = New-Object Net.Sockets.TcpListener ([Net.IPAddress]::Loopback), 0
+    $listener.Start(); $port = $listener.LocalEndpoint.Port; $listener.Stop()
+    $env:PYTHONPATH = Join-Path $repoRoot 'server'
+    $certs = Join-Path $repoRoot 'tests\certs'
+    $guildProc = Start-Process -FilePath $LocalGuildPython -PassThru -WindowStyle Hidden -RedirectStandardError (Join-Path $guildDir 'server.log') `
+        -ArgumentList @('-m', 'guildsync', '--db', "`"$db`"", '--cert', "`"$certs\test-server.pem`"", '--key', "`"$certs\test-server.key`"", '--host', '127.0.0.1', '--port', $port)
+    $up = $false
+    for ($i = 0; $i -lt 60 -and -not $up; $i++) {
+        if ($guildProc.HasExited) { throw "the local guild server exited early: $(Get-Content -LiteralPath (Join-Path $guildDir 'server.log') -Raw)" }
+        $c = New-Object Net.Sockets.TcpClient
+        try { $c.Connect('127.0.0.1', $port); $up = $true } catch { Start-Sleep -Milliseconds 500 } finally { $c.Close() }
+    }
+    if (-not $up) { throw 'the local guild server did not open its port in 30 s' }
+    $key = & $LocalGuildPython -m guildsync.keysctl --db $db issue --label ci-throwaway
+    if ($LASTEXITCODE -ne 0 -or -not $key) { throw 'keysctl could not issue a key' }
+    $env:HARVESTING_DUNE_KEY = "$key".Trim()
+    $SyncServer = "https://127.0.0.1:$port"
+    $CaFile = Join-Path $certs 'test-ca.pem'
+    Write-Host "local guild server on $SyncServer (pid $($guildProc.Id)), throwaway key issued"
+}
 $common = @('-NonInteractive', '-NoAutorun', '-InstallDir', $target)
 if ($UvSources) { $common += @('-UvSources', $UvSources) }
 if ($UvDir) { $common += @('-UvDir', $UvDir) }
@@ -54,3 +85,7 @@ Assert (-not (Test-Path -LiteralPath (Join-Path $target '.venv'))) 'uninstall re
 Assert (-not (Test-Path -LiteralPath (Join-Path $target 'src'))) 'uninstall removed src'
 Assert (Test-Path -LiteralPath (Join-Path $target 'data\keep-me.txt')) 'uninstall kept the data folder'
 Write-Host 'zip install test passed' -ForegroundColor Green
+} finally {
+    if ($guildProc) { & "$env:SystemRoot\System32\taskkill.exe" /PID $guildProc.Id /T /F 2>&1 | Out-Null }
+    if ($guildDir -and (Test-Path -LiteralPath $guildDir)) { Remove-Item -LiteralPath $guildDir -Recurse -Force -ErrorAction SilentlyContinue }
+}

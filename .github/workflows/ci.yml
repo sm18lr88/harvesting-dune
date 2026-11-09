@@ -50,6 +50,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install (for the throwaway local guild server; uv is hidden afterwards)
+        run: uv sync
+
       - name: Build the zip
         shell: powershell
         run: powershell -ExecutionPolicy Bypass -File installer\build-zip.ps1 -Version 0.0.0-ci
@@ -64,11 +69,10 @@ jobs:
             ForEach-Object { Rename-Item -LiteralPath $_.FullName -NewName ($_.Name + '.hidden'); Write-Host "hid $($_.FullName)" }
           if (Get-Command uv.exe -ErrorAction SilentlyContinue) { throw 'uv is still on PATH' }
 
+      # no secret: test-zip.ps1 starts a local guild server (test certificates), issues a throwaway key, stops the server
       - name: Install, install again, uninstall
         shell: powershell
-        env:
-          HARVESTING_DUNE_KEY: ${{ secrets.GUILD_TEST_KEY }}
-        run: powershell -ExecutionPolicy Bypass -File installer\test-zip.ps1 -Zip dist\harvesting-dune-0.0.0-ci.zip -WorkDir "$env:RUNNER_TEMP\zip test"
+        run: powershell -ExecutionPolicy Bypass -File installer\test-zip.ps1 -Zip dist\harvesting-dune-0.0.0-ci.zip -WorkDir "$env:RUNNER_TEMP\zip test" -LocalGuildPython "$PWD\.venv\Scripts\python.exe"
 
   server-linux:
     runs-on: ubuntu-latest

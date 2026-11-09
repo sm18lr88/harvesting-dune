@@ -1585,11 +1585,11 @@
         },
         "x-problem-types": [
           "about:blank",
-          "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.mdinvalid-field",
-          "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.mdcharacter-owned",
-          "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.mdrate-limited",
-          "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.mdinvalid-key",
-          "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.mdkey-expired"
+          "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.md#invalid-field",
+          "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.md#character-owned",
+          "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.md#rate-limited",
+          "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.md#invalid-key",
+          "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.md#key-expired"
         ]
       }
     }

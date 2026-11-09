@@ -9,7 +9,7 @@ reader of the old `{"error": ...}` shape keeps working.
 from http import HTTPStatus
 
 MEDIA_TYPE = "application/problem+json"
-BASE = "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.md"
+BASE = "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.md#"
 TYPES = {  # kind -> (title, v1 `error` text); the type URI is BASE + kind
     "invalid-field": ("Request body is invalid", "bad request"),
     "character-owned": ("Character belongs to another key", "character belongs to another key"),
