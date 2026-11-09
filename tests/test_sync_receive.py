@@ -26,7 +26,7 @@ def detector(world=DD, layout=LAYOUT):
     return det
 
 
-def sighting(cls, x, y, age=60.0, marker="spicefieldlarge", world=DD, layout=LAYOUT, observers=("alpha001",), **extra):
+def sighting(cls, x, y, age=60.0, marker="spicefieldlarge", world=DD, layout=LAYOUT, observers=("beta0002",), **extra):
     return {"cls": cls, "type": marker, "x": x, "y": y, "z": 0.0, "fill": 0.8, "size": "large", "rowKey": None,
             "distCm": None, "ageS": age, "observerName": "Leto Test", "observerKey": observers[0],
             "observers": list(observers), "rev": 1, "worldId": world, "layout": layout, **extra}
@@ -171,6 +171,22 @@ def test_a_shared_ore_node_is_a_violet_ring_that_fades_over_its_respawn_time():
     assert (row["cls"], row["name"], row["ageS"], row["observer"], row["lifetimeS"]) == ("ore", "Titanium Ore", 600, "Leto Test", 2700)
     det.clock = 1000.0 - 600 + 2700 + 1
     assert det.page_state()["alternatives"] == [] and det.peers_snapshot()["sightings"] == []
+
+
+def test_our_own_finds_coming_back_from_the_server_draw_no_ring():
+    det = detector()  # the server echoes our rows; our other characters share our key id
+    det.ingest_peer(response(sightings=[sighting("ore", 3000, 0, marker="titaniumore", observers=("alpha001",)),
+                                        sighting("spice", 9000, 0, observers=("alpha001",)),
+                                        sighting("ore", 6000, 0, marker="titaniumore", observers=("alpha001", "beta0002"))]), 5.0)
+    assert [(r["kind"], r["x"]) for r in det.peer_marks()] == [("peer", 6000)]
+
+
+def test_a_guild_ore_ring_gives_way_to_what_our_own_companion_shows():
+    det = detector()
+    actors(det, ore("live", 3000, 0), world=DD, t=2)  # the companion marks this node itself
+    det.mined_nodes.record("mined", "magnetiteore", 6000, 0, 0, 2)  # we mined this one: nothing is there
+    det.ingest_peer(response(sightings=[sighting("ore", x, 0, marker="magnetiteore") for x in (3000, 6000, 9000)]), 5.0)
+    assert [r["x"] for r in det.peer_marks()] == [9000]  # only the node we cannot see
 
 
 def test_a_gone_report_hides_the_scan_row_only_until_the_node_can_have_respawned():

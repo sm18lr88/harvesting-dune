@@ -16,6 +16,7 @@ TYPES = {  # kind -> (title, v1 `error` text); the type URI is BASE + kind
     "rate-limited": ("Too many requests", "rate limited"),
     "invalid-key": ("Key is not valid", "invalid key"),
     "key-expired": ("Key expired", "invalid key"),  # same v1 text: a v1 reader treats both alike
+    "object-cap": ("Too many live objects", "bad request"),
 }
 ERRORS = {  # v1 `error` text of the about:blank refusals
     401: "invalid key", 404: "not found", 405: "method not allowed", 413: "body too large",

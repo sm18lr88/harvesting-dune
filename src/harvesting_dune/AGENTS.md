@@ -31,6 +31,7 @@ Flat package: one `Detector` state machine (no I/O except its own data files) pl
 | Live loops, supervision | `runner.py` | failed loops are logged and restarted |
 | Settings page server | `server.py`, `viewer.html` | 127.0.0.1:8765 only |
 | Guild sync state, publish/receive | `peers.py`, `peerview.py` | in memory only; never ranking nodes, never `store.py` |
+| Shared overlay objects (pins) | `objects.py` (`ObjectsMixin`, a base of `PeerMixin`) -> `bridge.js RENDER` | memory only; never `dest`, `route` or `extraActors` |
 | Guild sync transport (HTTPS, gzip) | `sync.py` | private CA `sync-ca.pem`; records travel only with their partition |
 | Guild sync cadence, wake-ups, backoff | `syncloop.py` -> `runner.sync_loop` | 15/60/180 s by state; `det.sync_wake()` syncs at once; WARNING at most |
 | Guild characters (profile, switches, Characters view) | `profile.py` (reduce topics), `characters.py` (mixin), `server.py` `GET /character`, `viewer.html` `sec-chars` | never currencies, session history or bases; no Dune inventory topic exists |
@@ -38,12 +39,13 @@ Flat package: one `Detector` state machine (no I/O except its own data files) pl
 | CPU priority, EcoQoS, lean mode | `governor.py` | ctypes Win32 |
 
 ## CONTRACTS (change both sides together)
-- `outputs.py` <-> `bridge.js`: `page_state()` keys `dest`, `route`, `alternatives`, `stale`, `extraActors`, `problem` (documented in the `outputs.py` docstring).
+- `outputs.py` <-> `bridge.js`: `page_state()` keys `dest`, `route`, `alternatives`, `stale`, `extraActors`, `problem`, `objects` (documented in the `outputs.py` docstring).
 - `statuspage.py` <-> `viewer.html`: `snapshot()` keys are **only ever added**, never renamed or removed; old open tabs must keep working until they reload.
 - `snapshot()` key `peers` (guild sync status, roster, shared finds; key shown only as set or not); key `characters` (switches and rows only; details via `GET /character?id=`); `page_state()` `alternatives` kinds `peer` / `member` are rings only.
 - `model.py` parsers <-> companion payloads (`dune.session`, `dune.player`, `dune.map.actors`).
 
 ## DATA FILES: ONE WRITER EACH (under `data\`)
+Objects (pins) are memory-only: `objects.py` writes no file, so this list is unchanged.
 | File | Sole writer |
 |------|-------------|
 | `settings.json` | `settings.py` |

@@ -130,6 +130,8 @@ def test_first_poll_draws_the_guilds_ring_without_a_problem(tmp_path, guild, log
     runner = runner_for(tmp_path, url)
     det = runner.det
     notice = det.page_state()["problem"]  # None alone; earlier tests in the run may have left one
+    mate = {**FIRST_POLL["sightings"][0], "observerKey": "bravo002", "observers": ["bravo002"]}  # our own echo draws nothing
+    api.script = [(200, {**FIRST_POLL, "sightings": [mate]})]
     assert drive(runner, monkeypatch, lambda d: True) == [15.0]
     [body] = api.bodies
     assert body["since"] == 0 and isinstance(body["sentAt"], float) and body["identity"] == WHO

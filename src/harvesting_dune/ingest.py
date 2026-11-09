@@ -3,6 +3,7 @@
 
 dune.session -> world and vehicle state; dune.player -> position, terrain and vehicle motion;
 dune.rawStats -> vehicle names; dune.trackedSession -> who you play (name, id, battlegroup);
+dune.trackedDestination -> where a guild pin lands (memory only);
 dune.status -> in a game or not; the character topics (profile.TOPICS) -> characters.py;
 dune.map.actors -> tracked actors, spice blows, looted cages,
 nodes you mined, and stale scan rows.
@@ -42,6 +43,14 @@ class IngestMixin:
         except Exception:  # one odd payload must never take the detector down
             log.exception("ignored malformed %s message", msg.topic)
 
+    # Topics handled before anything else, then done. trackedSession comes first so a new character
+    # never inherits this delta's profile part; the destination is only read into memory.
+    _FIRST = {"dune.trackedSession": "_on_tracked_character", "dune.trackedDestination": "_on_destination"}
+
+    def _on_tracked_character(self, msg: BusMessage) -> None:
+        self._on_tracked_session(msg)
+        self.on_character_topic(msg)
+
     def _handle(self, msg: BusMessage, now: float) -> None:
         self.clock = max(self.clock, now)  # message time: ages are measured on the feed's clock
         # Any bus traffic proves the feed is live; the bridge usually attaches after the
@@ -50,9 +59,9 @@ class IngestMixin:
         if msg.type == "helloAck" or msg.topic is None:
             return
         self.journal.write(now, msg, self.lean)
-        if msg.topic == "dune.trackedSession":  # first: a new character must not inherit this delta's profile part
-            self._on_tracked_session(msg)
-            self.on_character_topic(msg)
+        first = self._FIRST.get(msg.topic)
+        if first is not None:
+            getattr(self, first)(msg)
             return
         if msg.topic in PROFILE_TOPICS:
             self.on_character_topic(msg)
@@ -116,6 +125,13 @@ class IngestMixin:
         self.in_game = in_game
         if not in_game:  # the game closed: the next character may be another one
             self._end_identity()
+
+    def _on_destination(self, msg: BusMessage) -> None:
+        """Where the player's own destination is, for a pin; a reset or no destination clears it."""
+        p = msg.payload if msg.type != "topicReset" and isinstance(msg.payload, dict) else {}
+        placed = p.get("hasDestination") is True and all(isinstance(p.get(k), (int, float)) and not isinstance(p.get(k), bool)
+                                                        and math.isfinite(p[k]) for k in ("x", "y", "z"))
+        self.native_dest = p if placed else None
 
     def _end_identity(self) -> None:
         """Forget who plays: guild sync says goodbye for that character and drops what it built for it."""

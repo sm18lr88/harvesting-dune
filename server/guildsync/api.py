@@ -5,22 +5,22 @@ The HTTPS front (httpd.py) has already checked the key, the rate limit and the b
 Character profiles have their own two routes (profiles.py).
 """
 
-import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
 from .board import MAX_LAG_S
-from .fields import ANY, PLACE, BadField, flag, identity, integer, join, number, obj, text
+from .fields import ANY, PLACE, TYPE, BadField, flag, identity, integer, join, number, obj, text
+from .objects import MAX_LIVE_PER_GROUP, MAX_LIVE_PER_KEY, ObjectCap, parse_objects
 from .presence import NEXT_S_RANGE, OLD_CLIENT, Beat
-from .problems import OTHER_KEY, invalid
+from .problems import OTHER_KEY, invalid, problem
 from .profiles import ProfileRoutes
 
 MAX_RECORDS = 200
 CLASSES = frozenset({"spice", "blow", "ship", "mined", "stale", "ore"})
 SIZES = frozenset({"small", "medium", "large"})
-_TYPE = re.compile(r"[a-z0-9_]{1,64}")
+_TYPE = TYPE
 BODY_FIELDS = ("since", "sentAt", "identity", "partition", "position", "records")
-OPTIONAL_BODY_FIELDS = ("presence",)  # added in /v1: a body without it is an older client
+OPTIONAL_BODY_FIELDS = ("presence", "objects")  # added in /v1: a body without them is an older client
 PRESENCE_FIELDS = ("nextS", "inGame", "leaving")
 RECORD_FIELDS = ("cls", "type", "x", "y", "z", "observedAt", "fill", "size", "rowKey", "distCm")
 PARTITION_FIELDS = ("worldId", "layout")
@@ -38,6 +38,7 @@ class SyncRequest:
     position: dict | None
     records: list[dict]
     beat: Beat = OLD_CLIENT
+    objects: tuple[dict, ...] = ()
 
 
 def _choice(value: object, field: str, allowed: frozenset[str]) -> str:
@@ -79,9 +80,9 @@ def _beat(value: object) -> Beat:
 
 def parse(body: object) -> SyncRequest:
     """The typed request, or BadField for the first field (in body order) that breaks a rule;
-    `presence` is checked last."""
-    given = isinstance(body, dict) and "presence" in body
-    b = obj({k: v for k, v in body.items() if k != "presence"} if given else body, "", BODY_FIELDS)
+    the optional fields are checked last, in OPTIONAL_BODY_FIELDS order."""
+    given = {k: body[k] for k in OPTIONAL_BODY_FIELDS if k in body} if isinstance(body, dict) else {}
+    b = obj({k: v for k, v in body.items() if k not in given} if given else body, "", BODY_FIELDS)
     since = integer(b["since"], "since", 0)
     sent_at = number(b["sentAt"], "sentAt")
     who = identity(b["identity"])
@@ -89,8 +90,9 @@ def parse(body: object) -> SyncRequest:
     partition = {key: text(p[key], f"partition.{key}", PLACE, 64) for key in PARTITION_FIELDS}
     position = None if b["position"] is None else _point(obj(b["position"], "position", POINT_FIELDS), "position")
     records = [_record(r, f"records[{n}]") for n, r in enumerate(_list(b["records"], "records", MAX_RECORDS))]
-    beat = _beat(body["presence"]) if given else OLD_CLIENT
-    return SyncRequest(since, sent_at, who, partition, position, records, beat)
+    beat = _beat(given["presence"]) if "presence" in given else OLD_CLIENT
+    objects = tuple(parse_objects(given["objects"])) if "objects" in given else ()
+    return SyncRequest(since, sent_at, who, partition, position, records, beat, objects)
 
 
 def _lag(sent_at: float, observed_at: float) -> float:
@@ -111,12 +113,19 @@ class Api(ProfileRoutes):
             return 400, invalid(bad.field)
         if not self.storage.upsert_character(key["id"], req.identity, now):  # the ownership check, in the write
             return 403, OTHER_KEY
-        self._write(key["id"], req, ip, now)
+        try:
+            self._write(key["id"], req, ip, now)
+        except ObjectCap as cap:
+            limit = MAX_LIVE_PER_KEY if cap.which == "key" else MAX_LIVE_PER_GROUP
+            detail = f"The {cap.which} already has {limit} live objects: delete one first."
+            return 400, problem(400, "object-cap", detail, field=cap.field)
         return 200, self._view(req, now)
 
     def _write(self, key_id: str, req: SyncRequest, ip: str, now: float) -> None:
         s, name, group = self.storage, req.identity["characterName"], req.identity["battlegroupId"]
         lag = 0.0 if req.position is None else _lag(req.sent_at, req.position["observedAt"])
+        if req.objects:  # first: a refused object (ObjectCap) leaves the rest of the request unwritten
+            s.upsert_objects(key_id, req.identity, list(req.objects), now)
         s.upsert_presence(key_id, req.identity, req.partition, req.position, now, lag, req.beat)
         if req.records:
             s.upsert_sightings(key_id, name, group, req.partition, req.records, now, req.sent_at)
@@ -131,4 +140,8 @@ class Api(ProfileRoutes):
             {**{k: v for k, v in r.items() if k not in ("receivedAt", "lag")}, "ageS": now - r["receivedAt"] + r["lag"]}
             for r in rows
         ]
-        return {"now": now, "next": cursor, "keyState": "valid", "presence": presence, "sightings": sightings}
+        # after sightings_since read the global rev, so an object committed in between is not skipped
+        objects, cut = s.objects_since(group, req.since, now)
+        nxt = cursor if cut is None else min(cursor, cut)
+        return {"now": now, "next": nxt, "keyState": "valid", "presence": presence, "sightings": sightings,
+                "objects": objects}

@@ -46,7 +46,7 @@ def test_migration_5_adds_roles_and_makes_the_owner_key_admin(tmp_path):
     st = Storage.open(path, Clock())
     roles = dict(st._conn.execute("SELECT id, role FROM keys").fetchall())
     assert roles == {"7cc09c11": "admin", "alpha001": "regular"}
-    assert st._conn.execute("PRAGMA user_version").fetchone()[0] == len(MIGRATIONS) == 5
+    assert st._conn.execute("PRAGMA user_version").fetchone()[0] == len(MIGRATIONS)
     st.close()
 
 

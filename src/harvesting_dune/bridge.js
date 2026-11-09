@@ -16,7 +16,7 @@
     route: null, routeShown: false, nativeRoute: null, nativeRouteMode: false,
     extraActors: [], lastActors: null, lastSession: null,
     hideSpawnPoints: true, // empty spice spawn points look like fields on the companion map
-    alternatives: [], pose: null, maps: [], altLayer: null, altMap: null, altTransform: null,
+    alternatives: [], objects: [], pose: null, maps: [], altLayer: null, altMap: null, altTransform: null,
     stale: new Set(),
   });
 
@@ -271,13 +271,56 @@
     for (let i = 0; i < n; i++) out.push([at(i / n), at((i + 0.55) / n)]);
     return out;
   };
+  // Guild pin labels: strokes on a 4 x 6 cell, flat [x, y, x, y, ...] polylines, y down. The table is the
+  // whitelist: a character not in it is dropped, so another player's text only ever becomes these strokes.
+  const GLYPHS = Object.assign(Object.create(null), {
+    A: [[0, 6, 0, 2, 2, 0, 4, 2, 4, 6], [0, 3, 4, 3]], B: [[0, 0, 0, 6, 3, 6, 4, 5, 4, 4, 3, 3, 0, 3], [0, 0, 3, 0, 4, 1, 4, 2, 3, 3]],
+    C: [[4, 0, 0, 0, 0, 6, 4, 6]], D: [[0, 0, 0, 6, 2, 6, 4, 4, 4, 2, 2, 0, 0, 0]], E: [[4, 0, 0, 0, 0, 6, 4, 6], [0, 3, 3, 3]],
+    F: [[4, 0, 0, 0, 0, 6], [0, 3, 3, 3]], G: [[4, 0, 0, 0, 0, 6, 4, 6, 4, 3, 2, 3]], H: [[0, 0, 0, 6], [4, 0, 4, 6], [0, 3, 4, 3]],
+    I: [[1, 0, 3, 0], [2, 0, 2, 6], [1, 6, 3, 6]], J: [[4, 0, 4, 6, 0, 6, 0, 4]], K: [[0, 0, 0, 6], [4, 0, 0, 3, 4, 6]],
+    L: [[0, 0, 0, 6, 4, 6]], M: [[0, 6, 0, 0, 2, 3, 4, 0, 4, 6]], N: [[0, 6, 0, 0, 4, 6, 4, 0]], O: [[0, 0, 4, 0, 4, 6, 0, 6, 0, 0]],
+    P: [[0, 6, 0, 0, 4, 0, 4, 3, 0, 3]], Q: [[0, 0, 4, 0, 4, 6, 0, 6, 0, 0], [2, 4, 4, 6]], R: [[0, 6, 0, 0, 4, 0, 4, 3, 0, 3, 4, 6]],
+    S: [[4, 0, 0, 0, 0, 3, 4, 3, 4, 6, 0, 6]], T: [[0, 0, 4, 0], [2, 0, 2, 6]], U: [[0, 0, 0, 6, 4, 6, 4, 0]], V: [[0, 0, 2, 6, 4, 0]],
+    W: [[0, 0, 1, 6, 2, 3, 3, 6, 4, 0]], X: [[0, 0, 4, 6], [4, 0, 0, 6]], Y: [[0, 0, 2, 3, 4, 0], [2, 3, 2, 6]], Z: [[0, 0, 4, 0, 0, 6, 4, 6]],
+    0: [[0, 0, 4, 0, 4, 6, 0, 6, 0, 0], [0, 6, 4, 0]], 1: [[1, 1, 2, 0, 2, 6], [1, 6, 3, 6]], 2: [[0, 0, 4, 0, 4, 3, 0, 3, 0, 6, 4, 6]],
+    3: [[0, 0, 4, 0, 4, 6, 0, 6], [1, 3, 4, 3]], 4: [[0, 0, 0, 3, 4, 3], [4, 0, 4, 6]], 5: [[4, 0, 0, 0, 0, 3, 3, 3, 4, 4, 4, 6, 0, 6]],
+    6: [[4, 0, 0, 0, 0, 6, 4, 6, 4, 3, 0, 3]], 7: [[0, 0, 4, 0, 1, 6]], 8: [[0, 0, 4, 0, 4, 6, 0, 6, 0, 0], [0, 3, 4, 3]],
+    9: [[4, 3, 0, 3, 0, 0, 4, 0, 4, 6, 0, 6]], '-': [[0, 3, 4, 3]], '.': [[2, 5.5, 2, 6]], '!': [[2, 0, 2, 4], [2, 5.5, 2, 6]],
+    '?': [[0, 1, 0, 0, 4, 0, 4, 3, 2, 3, 2, 4], [2, 5.5, 2, 6]], '/': [[4, 0, 0, 6]], ' ': [],
+  });
+  const LABEL_MAX = 16, PIN_RING = 3000;
+  // the label centred under a ring of radius r, in map space (screen y down) so it reads upright
+  const glyphLines = (map, tt, a, r, text) => {
+    const c = map.view.translate(a.x, a.y, tt), e = map.view.translate(a.x + r, a.y, tt);
+    const rpx = Math.hypot(e.x - c.x, e.y - c.y), h = rpx * 0.5, w = h * 0.6, step = w * 1.3;
+    const at = (x, y) => Object.assign(Object.create(Object.getPrototypeOf(c)), c, { x, y });
+    const chars = [...text].filter((ch) => GLYPHS[ch]).slice(0, LABEL_MAX);
+    const left = c.x - (chars.length * step - (step - w)) / 2, top = c.y + rpx * 1.2;
+    const out = [];
+    chars.forEach((ch, k) => {
+      for (const line of GLYPHS[ch]) {
+        const pts = [];
+        for (let i = 0; i < line.length; i += 2) pts.push(at(left + k * step + (line[i] / 4) * w, top + (line[i + 1] / 6) * h));
+        out.push(pts);
+      }
+    });
+    return out;
+  };
+  const drawPin = (map, tt, o) => {
+    const style = { color: o.mine ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.7)', weight: 2 };
+    dd.altLayer.addPolyline(ring(map, tt, o, PIN_RING), style);
+    if (o.mine) dd.altLayer.addPolyline(ring(map, tt, o, PIN_RING / 2), style);
+    const label = String((o.body && o.body.label) || '').toUpperCase();
+    for (const pts of glyphLines(map, tt, o, PIN_RING, label)) dd.altLayer.addPolyline(pts, style);
+  };
+  const RENDER = Object.assign(Object.create(null), { pin: drawPin });
   const redrawAlternatives = (force) => {
     const map = liveMap();
     if (!map) return 'no-map';
     const now = Date.now();
     const pose = dd.pose;
     if (!force) {
-      if (!dd.alternatives.length && !(dd.altLayer && dd.altLayer.vectors && dd.altLayer.vectors.size)) return 'idle';
+      if (!dd.alternatives.length && !dd.objects.length && !(dd.altLayer && dd.altLayer.vectors && dd.altLayer.vectors.size)) return 'idle';
       if (now - altDrawnAt < 1000) return 'throttled';
       if (pose && altAnchor && Math.hypot(pose.x - altAnchor.x, pose.y - altAnchor.y) < 3000) return 'still';
     }
@@ -289,7 +332,7 @@
       }
       dd.altLayer.clearVectors();
       const tt = calibrate(map);
-      if (!tt || !pose || !dd.alternatives.length) return tt ? 'empty' : 'uncalibrated';
+      if (!tt || !pose || (!dd.alternatives.length && !dd.objects.length)) return tt ? 'empty' : 'uncalibrated';
       const from = map.view.translate(pose.x, pose.y, tt);
       for (const a of dd.alternatives) {
         if (!Number.isFinite(a.x) || !Number.isFinite(a.y)) continue; // peer items come from other players: one bad item must not blank the rest
@@ -304,6 +347,12 @@
         }
         const to = map.view.translate(a.x, a.y, tt);
         for (const seg of a.dash ? dashes(from, to) : [[from, to]]) dd.altLayer.addPolyline(seg, style);
+      }
+      // guild objects come from other players: unknown kinds are skipped, one bad object never blanks the rest
+      for (const o of dd.objects) {
+        const draw = RENDER[o.kind];
+        if (!draw || !Number.isFinite(o.x) || !Number.isFinite(o.y)) continue;
+        try { draw(map, tt, o); } catch (e) { report('objects', e); }
       }
       altDrawnAt = now;
       altAnchor = pose ? { x: pose.x, y: pose.y } : null;
@@ -419,6 +468,7 @@
     state = state || {};
     dd.dest = state.dest || null;
     dd.alternatives = state.alternatives || [];
+    dd.objects = state.objects || [];
     dd.route = state.route || null;
     dd.extraActors = state.extraActors || [];
     dd.stale = new Set(state.stale || []);

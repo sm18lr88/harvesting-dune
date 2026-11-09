@@ -21,7 +21,8 @@ log = logging.getLogger(__name__)
 
 ACTOR_JOURNAL_EVERY_S = 20.0
 _SESSION_FIELDS = ("characterName", "characterId", "battlegroupId", "sessionId", "isActive")
-_NOT_JOURNALED = frozenset({"dune.skillProgress", "dune.knownRecipes", "dune.achievements", "dune.landsraad"})
+_NOT_JOURNALED = frozenset({"dune.skillProgress", "dune.knownRecipes", "dune.achievements", "dune.landsraad",
+                            "dune.trackedDestination"})  # the player's destination stays in memory only
 _VEHICLE_WORDS = ("vehicle", "buggy", "sandbike", "ornithopter", "crawler", "harvester", "thopter", "treadwheel")
 
 

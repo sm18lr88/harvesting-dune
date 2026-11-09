@@ -58,7 +58,7 @@ class SyncThrottled(SyncError):
 class SyncServerError(SyncError):
     def __init__(self, status: int, note: str = "") -> None:
         super().__init__(f"HTTP {status} ({note})" if note else f"HTTP {status}")
-        self.status = status
+        self.status, self.note = status, note
 
 
 class SyncUnreachable(SyncError):

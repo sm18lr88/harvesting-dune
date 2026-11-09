@@ -96,7 +96,7 @@
       "post": {
         "operationId": "sync",
         "summary": "Upload finds, get the guild's",
-        "description": "Upserts the caller's presence and records (each keyed by its 20 m cell; a retry changes nothing but the row's rev), then returns the battlegroup's presence and the partition's sightings after `since`. Safe to retry: no Idempotency-Key needed.",
+        "description": "Upserts the caller's presence and records (each keyed by its 20 m cell; a retry changes nothing but the row's rev), then returns the battlegroup's presence and the partition's sightings after `since`. Safe to retry: no Idempotency-Key needed. Optional `objects` creates, replaces or deletes the caller's shared objects; the reply lists the battlegroup's objects after `since`.",
         "parameters": [
           {
             "$ref": "#/components/parameters/ClientVersion"
@@ -733,7 +733,7 @@
     },
     "responses": {
       "BadRequest": {
-        "description": "The body is not JSON, nests too deep, its gzip does not inflate, or a field breaks a rule. type ends in #invalid-field; `field` names the first bad field. Nothing is written.",
+        "description": "The body is not JSON, nests too deep, its gzip does not inflate, or a field breaks a rule. type ends in #invalid-field; `field` names the first bad field. Nothing is written. The type ends in #object-cap instead when a live object would pass a cap (field = objects[n]).",
         "content": {
           "application/problem+json": {
             "schema": {
@@ -1082,9 +1082,17 @@
           },
           "presence": {
             "$ref": "#/components/schemas/PresenceBeat"
+          },
+          "objects": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "$ref": "#/components/schemas/ObjectUpload"
+            },
+            "description": "Optional (added in /v1). Shared overlay objects to create, replace or delete. Send it only after a reply of this server carried the `objects` key: an older server refuses the whole body with 400."
           }
         },
-        "description": "`presence` is optional (added in /v1): a body without it is an older client, read as nextS 60, inGame true, leaving false."
+        "description": "`presence` is optional (added in /v1): a body without it is an older client, read as nextS 60, inGame true, leaving false. `objects` is optional too: see ObjectUpload."
       },
       "PresenceBeat": {
         "type": "object",
@@ -1115,6 +1123,100 @@
           }
         },
         "description": "The heartbeat part of a sync. JSON booleans only (0, 1 and \"true\" are refused)."
+      },
+      "ObjectUpload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "kind",
+          "scope",
+          "geometry",
+          "body",
+          "ttlS"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9_-]{1,64}$",
+            "description": "Chosen by the author. Unique per key: two keys may use the same id. The same id again replaces the object."
+          },
+          "kind": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-z0-9_]{1,64}$",
+            "description": "Free: the server keeps no list of kinds. The client draws `pin` and skips kinds it does not know."
+          },
+          "scope": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Partition"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Where the object applies. null = the whole battlegroup."
+          },
+          "geometry": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Point"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "null = no position."
+          },
+          "body": {
+            "$ref": "#/components/schemas/PlainValue",
+            "x-max-stored-bytes": 512,
+            "description": "Opaque to the server: any plain JSON value, at most 512 bytes as canonical JSON (sorted keys, no spaces). A pin's body is {\"label\": \"<at most 16 characters>\"}."
+          },
+          "ttlS": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9223372036854775807,
+            "x-clamp-max": 86400,
+            "description": "Seconds to live from the server's receipt. Over 86400 is clamped to 86400. 0 deletes the object (a tombstone with a new rev)."
+          }
+        },
+        "x-max-live-per-key": 20,
+        "x-max-live-per-battlegroup": 300,
+        "description": "One shared object. A live upload (ttlS > 0) is refused with 400 #object-cap when the key already has 20 live objects or the battlegroup 300 (other ids). A replace or a delete always passes. The key's rows (live and ended) are trimmed to 100 by dropping its oldest ended rows."
+      },
+      "Point": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "x",
+          "y",
+          "z"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "point"
+            ],
+            "description": "More shapes may be added in /v1."
+          },
+          "x": {
+            "type": "number"
+          },
+          "y": {
+            "type": "number"
+          },
+          "z": {
+            "type": "number"
+          }
+        },
+        "description": "A point in world centimetres. Numbers are finite."
       },
       "PlainValue": {
         "description": "Plain JSON: finite numbers, integers within 64 bits, text up to 200 characters, lists up to 1000 items, objects up to 100 keys of at most 64 characters, at most 6 levels below `profile`.",
@@ -1399,6 +1501,65 @@
           }
         }
       },
+      "StoredObject": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "scope": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Partition"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "geometry": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Point"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "body": {
+            "$ref": "#/components/schemas/PlainValue"
+          },
+          "ttlS": {
+            "type": "number",
+            "description": "Seconds left on the server clock. 0 or less = deleted or ended: drop the object."
+          },
+          "ageS": {
+            "type": "number",
+            "description": "Seconds since the server received it."
+          },
+          "characterId": {
+            "type": "integer"
+          },
+          "characterName": {
+            "type": "string"
+          },
+          "playerTag": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}$",
+            "minLength": 8,
+            "maxLength": 8,
+            "description": "The author's opaque tag, as in StoredProfile. With id, it names the object."
+          },
+          "rev": {
+            "type": "integer"
+          }
+        },
+        "description": "One shared object of the caller's battlegroup, in any world. Delivered again with a new rev when it changes or ends; a reader keys it by (playerTag, id)."
+      },
       "SyncReply": {
         "type": "object",
         "description": "New response keys may appear in /v1: ignore keys you do not know.",
@@ -1428,6 +1589,15 @@
               "$ref": "#/components/schemas/Sighting"
             },
             "description": "rev > since in the caller's battlegroup and layout, lowest rev first. 500 rows means the list was cut: ask again at once."
+          },
+          "objects": {
+            "type": "array",
+            "maxItems": 200,
+            "x-page-size": 200,
+            "items": {
+              "$ref": "#/components/schemas/StoredObject"
+            },
+            "description": "Objects with rev > since in the caller's battlegroup (no world filter), lowest rev first, ended ones included. 200 rows means the list was cut: `next` is then at most the last row's rev; ask again at once."
           }
         }
       },
@@ -1589,7 +1759,8 @@
           "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.md#character-owned",
           "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.md#rate-limited",
           "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.md#invalid-key",
-          "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.md#key-expired"
+          "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.md#key-expired",
+          "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.md#object-cap"
         ]
       }
     }

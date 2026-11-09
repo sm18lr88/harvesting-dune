@@ -44,6 +44,8 @@ The detector is one Python process. Each module has one reason to change. Each d
 | `corrections.py` | Writes `data\corrections-<map>-<seed>.json` and `data\scan-<map>-<seed>.json`. |
 | `journal.py` | Writes `data\journals\*.jsonl`. |
 | `peers.py` | Guild sync state: what the tool publishes and what the guild shared. It writes no file. |
+| `objects.py` | Shared overlay objects (pins today): what the guild shared, what you publish, and the `objects` key of `page_state`. It writes no file. |
+| `bridge.js` `RENDER` | The object renderer in the companion's map: a ring and a label drawn as strokes. Only letters, digits and a few marks have strokes. Other characters are dropped. |
 | `sync.py` | The HTTPS link to the guild server: one request, gzip both ways. It also makes the dataset GETs. |
 | `syncloop.py` | When to talk to the guild server: the cadence, wake-ups, retries and backoff. |
 | `profile.py`, `characters.py` | Your character profile for the guild, and the guild's profiles for the Characters section. They write no file. |
@@ -186,6 +188,8 @@ Data flow:
 
 **Ages:** the server sends each row's age, not a clock time. The detector turns the age into feed-clock time. Thus, replays and the live feed age rows the same way. Rings fade with age. A guildmate's ring is full while they are online, faded when they are late, and gone when they leave (the server says which; see SYNC-PROTOCOL.md "Presence").
 
+**Objects (pins):** the server keeps them in their own `objects` table. An object has an id, a kind, a scope, an optional point, a small body and a lifetime. The server checks the envelope, not the body. So a new kind needs no server change. A delete is an upload with a lifetime of 0. Revoking a key, or its idle expiry, ends its objects for everyone. The sweep deletes them a day later. Caps apply when an object is made: 20 live per key, 300 per battlegroup, a body of 512 bytes and a lifetime of 24 h. Objects share the `since`/`next` cursor with sightings. They come for the whole battlegroup. The detector keeps them in memory and draws only those for your map and layout.
+
 **Failures:** a failed sync waits 30 s, 1 min, 2 min, 5 min, then 10 min. It logs a warning at most once a minute. The rest of the detector keeps running. Finds that did not go out are sent with the next sync, but only in the same world.
 
 **Characters:** the companion's skill, schematic, achievement, Landsraad, stats and session topics are kept in memory (`characters.py`). `profile.py` cuts them down to what the companion's own pages show. The profile goes up only when it changed, at most every 5 min. The guild's profiles come down only while the Characters section is open. They are never part of a sync answer.
@@ -205,6 +209,7 @@ What never happens:
 - **The tool restarts failed background loops:** if one loop fails (feed, scan refresh, loot index, …), the tool logs the error and restarts that loop. The other loops continue to draw lines. If a scan download fails, the tool keeps the rows that it has. It tries again after 30 s, 1 min, 2 min, and so on, up to 10 min.
 - **Clean exit** (`--exit-when-companion-gone`): after the companion refused connections for that time, the detector saves the terrain, clears the pages and exits. This also works when a settings page is open.
 - **Problems are reported, the companion is not touched:** every error (from every source, also from `bridge.js` in a companion page) goes into a list of the last 20. The settings page shows them with a report to copy. The companion's map window shows a small notice for 30 min after an error. If the detector fails 3 times quickly, the watcher shows a Windows message once per companion session. The code of the bridge catches its own errors, so a failure never reaches the companion's own code.
+- **Objects:** one bad object never blanks the layer. The bridge skips it and draws the rest. If the server refuses a pin, the tool drops it and shows a note on the settings page. Positions and finds go out again at once.
 - **Settings page:** the server answers only `127.0.0.1` and `localhost` and refuses changes from other websites. Each change shows "Saved" or the reason why it failed. A tab that shows an old version reloads itself.
 
 ## Logs

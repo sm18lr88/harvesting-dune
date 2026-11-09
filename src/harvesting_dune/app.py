@@ -131,6 +131,8 @@ class Detector(IngestMixin, ControlsMixin, RankingMixin, OutputsMixin, StatusPag
         self.sync_hidden_members: set[int] = set()  # guildmates (character ids) not drawn on my minimap
         self.share_character = True  # characters.py: my profile goes to the guild
         self.share_session = True  # ...with this session's XP, dailies and loot
+        self.native_dest: dict | None = None  # the companion destination the player set: memory only, never journaled
+        self.pin_label = "PIN"  # objects.py: the label the pin hotkey drops
         self.peers = PeerStore()
         self.chars = CharacterState()
         self._farm_setup()  # farm.py: routes, the run (off by default), stop done-times

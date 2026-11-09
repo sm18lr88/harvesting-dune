@@ -11,6 +11,7 @@ import math
 
 from . import settings
 from .catalog import BY_KEY, EXTRA_BY_KEY, GROUP_OF, MINIMAP_EXTRAS, MINIMAP_RESOURCES, RESOURCES
+from .objects import LABEL_MAX
 from .vehicle import VEHICLE_CHOICES
 from .zones import ROWS
 
@@ -101,6 +102,9 @@ class ControlsMixin:
         if action in ("sync_pause", "sync_positions", "sync_member", "share_character", "share_session"):
             self._sync_action(action, value)
             return
+        if action in ("object_pin", "object_delete", "pin_label"):
+            self._object_action(action, value)
+            return
         if action == "guild_view":  # the settings page opened a guild list: fresh data now
             if value == "characters":
                 self.characters_opened()
@@ -168,6 +172,20 @@ class ControlsMixin:
             case _:
                 return
         settings.save(self)
+
+    def _object_action(self, action: str, value: str | None) -> None:
+        """Pins: one publish path for the hotkey and the settings page; never touches the ranking."""
+        text = (value or "").strip()[:LABEL_MAX]
+        match action:
+            case "object_pin":
+                label = text or self.pin_label
+                if label:
+                    self.publish_object("pin", {"label": label})
+            case "object_delete":
+                self.delete_object(value or "")
+            case _ if text:  # pin_label
+                self.pin_label = text
+                settings.save(self)
 
     def _setting_action(self, action: str, value: str | None) -> bool:
         """Apply one action; False if it was not recognised or its value was invalid."""

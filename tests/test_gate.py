@@ -19,7 +19,7 @@ from harvesting_dune.sync import SyncExpired, SyncRejected, SyncUnreachable
 KEY = "gs1_alpha001_Qm9vdHN0cmFwVGVzdEtleUFscGhhMDAx"
 T0 = 1_800_000_000.0
 GRACE_S = 72 * 3600  # the spec's number, not gate.GRACE_S: a test that imports it would follow a wrong value
-BLANK = {"dest": None, "route": None, "alternatives": [], "stale": [], "extraActors": [], "problem": None}
+BLANK = {"dest": None, "route": None, "alternatives": [], "stale": [], "extraActors": [], "problem": None, "objects": []}
 ROUTE = {"id": "test-route", "name": "Test route", "items": ["testitem"], "resetS": 2700, "confidence": "high",
          "sites": [{"name": "Test site", "world": "survival_1", "center": {"x": 100000, "y": 0, "z": 0},
                     "stops": [{"x": 100000, "y": 0, "z": 0, "kind": "chest", "name": "Chest", "order": 1}]}]}

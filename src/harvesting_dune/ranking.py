@@ -51,6 +51,22 @@ def tour_order(areas: list[Area], x: float, y: float) -> list[Area]:
     return out
 
 
+def _near_stop(a, b) -> bool:
+    return math.hypot(a.x - b.x, a.y - b.y) < AREA_RADIUS_CM
+
+
+def _rescued_stop(areas: list, prev):
+    """The stop we were heading to is still there, only not routed this time: the ranking routes the most
+    valuable few, a tour wants the nearest (live: a reported ship 2.8 km away left the routed set and the
+    line jumped to one 5.7 km away). Kept with its last estimate; a stop gone or emptied is not rescued."""
+    lost = next((a for a in areas if not a.feasible and a.reasons and _near_stop(a, prev)
+                 and all(r.startswith(("no practical", "cannot beat")) for r in a.reasons)), None)
+    if lost is not None:
+        lost.feasible, lost.utility, lost.expected, lost.trip_s = True, prev.utility, prev.expected, prev.trip_s
+        lost.reasons = ["kept as your next stop"]
+    return lost
+
+
 class RankingMixin:
     # -- zones -------------------------------------------------------------------------------
     def _fit(self):
@@ -276,7 +292,7 @@ class RankingMixin:
         prev = next((a for a in self.areas if a.feasible), None)
         self._notice_move_on(prev, feasible)
         if self.resource.tour and self.store.pose is not None:
-            feasible = tour_order(feasible, self.store.pose.x, self.store.pose.y)
+            feasible = self._tour_kept(feasible, areas, prev)
         elif self.resource.chance:
             feasible.sort(key=lambda a: -a.find_chance())  # the most likely place first
         elif prev:
@@ -303,6 +319,24 @@ class RankingMixin:
         if state != self._last_published:
             self._last_published = state
             self.publish_rev += 1
+
+    def _tour_kept(self, feasible: list[Area], areas: list[Area], prev: Area | None) -> list[Area]:
+        """Tour stops nearest-first, but the stop you are heading to stays first unless another is clearly
+        nearer (live: reported ships about the same distance away swapped after 70 m of flight)."""
+        p = self.store.pose
+        feasible = tour_order(feasible, p.x, p.y)
+        if prev is None:
+            return feasible
+        again = next((a for a in feasible if _near_stop(a, prev)), None)
+        if again is None:
+            again = _rescued_stop(areas, prev)
+            if again is not None:
+                feasible.append(again)
+        if again is not None and again is not feasible[0] and (
+                math.hypot(again.x - p.x, again.y - p.y) < SWITCH_MARGIN * math.hypot(feasible[0].x - p.x, feasible[0].y - p.y)):
+            feasible.remove(again)
+            feasible = [again, *tour_order(feasible, again.x, again.y)]
+        return feasible
 
     def _notice_move_on(self, prev: Area | None, feasible: list[Area]) -> None:
         """'Area mined out -> next 1.2 km' when the target leaves the patch you mined in.

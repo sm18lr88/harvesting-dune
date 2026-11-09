@@ -6,6 +6,7 @@ import re
 MAX_INT = 2**63 - 1  # SQLite INTEGER
 PLACE = re.compile(r"[A-Za-z0-9_-]{1,64}")
 ANY = re.compile(r".+", re.DOTALL)
+TYPE = re.compile(r"[a-z0-9_]{1,64}")  # a sighting type, an object kind
 IDENTITY_FIELDS = ("characterName", "characterId", "battlegroupId")
 
 

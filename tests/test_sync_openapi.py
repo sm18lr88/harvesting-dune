@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
-from guildsync import api, datasets, fields, httpd, presence, problems, profiles, profilestore
+from guildsync import api, datasets, fields, httpd, objects, presence, problems, profiles, profilestore
 
 ROOT = Path(__file__).parent.parent
 SPEC = json.loads((ROOT / "docs" / "sync-openapi.yaml").read_text(encoding="utf-8"))  # JSON syntax is valid YAML
@@ -25,6 +25,7 @@ def test_the_spec_lists_exactly_the_routes_the_server_answers():
     ("PresenceBeat", api.PRESENCE_FIELDS), ("Record", api.RECORD_FIELDS), ("Identity", fields.IDENTITY_FIELDS),
     ("Partition", api.PARTITION_FIELDS), ("Position", api.POINT_FIELDS), ("ProfileUpload", profiles.PROFILE_BODY),
     ("Profile", profiles.PROFILE_FIELDS), ("Session", profiles.SESSION_FIELDS), ("ProfilesRequest", profiles.PROFILES_BODY),
+    ("ObjectUpload", objects.OBJECT_FIELDS), ("Point", objects.GEOMETRY_FIELDS),
 ])
 def test_request_schemas_are_closed_and_match_the_server_allowlists(schema, allowed):
     s = SCHEMAS[schema]
@@ -42,6 +43,18 @@ def test_the_spec_declares_the_presence_states_and_bounds():
     assert SCHEMAS["PresenceBeat"]["properties"]["nextS"]["x-clamp"] == list(presence.NEXT_S_RANGE)
     assert SCHEMAS["Member"]["properties"]["state"]["enum"] == list(presence.STATES)
     assert SCHEMAS["StoredProfile"]["properties"]["playerTag"]["maxLength"] == profilestore.TAG_HEX
+
+
+def test_the_spec_declares_the_object_bounds():
+    upload, reply = SCHEMAS["ObjectUpload"], SCHEMAS["SyncReply"]["properties"]["objects"]
+    assert SCHEMAS["SyncRequest"]["properties"]["objects"]["maxItems"] == objects.MAX_OBJECTS
+    assert upload["properties"]["body"]["x-max-stored-bytes"] == objects.MAX_OBJECT_BODY
+    assert upload["properties"]["ttlS"]["x-clamp-max"] == objects.MAX_OBJECT_TTL_S
+    assert (upload["x-max-live-per-key"], upload["x-max-live-per-battlegroup"]) == (
+        objects.MAX_LIVE_PER_KEY, objects.MAX_LIVE_PER_GROUP)
+    assert SCHEMAS["StoredObject"]["properties"]["playerTag"]["maxLength"] == profilestore.TAG_HEX
+    assert reply["x-page-size"] == reply["maxItems"] == objects.OBJECTS_PAGE
+    assert SCHEMAS["Point"]["properties"]["type"]["enum"] == sorted(objects.GEOMETRY_TYPES)
 
 
 def test_the_spec_declares_the_server_bounds():

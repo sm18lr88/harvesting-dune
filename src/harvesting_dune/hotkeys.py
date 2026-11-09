@@ -7,6 +7,7 @@ Ctrl+Alt+Down         : recommendations on / off
 Ctrl+Alt+L            : directional lines on / off (drawn only when one resource is shown)
 Ctrl+Alt+M            : companion minimap on / off, in every activity (on foot, combat, driving, building)
 Ctrl+Alt+N            : farm route: skip to the next stop (like Ctrl+Alt+M, mouse software can put it on a button)
+Ctrl+Alt+P            : drop a guild pin with your preset label at your companion destination, else where you stand
 
 RegisterHotKey only listens for the key combination; it does not read or inject
 input into the game.
@@ -26,13 +27,14 @@ log = logging.getLogger(__name__)
 
 MOD_ALT, MOD_CONTROL, MOD_NOREPEAT = 0x0001, 0x0002, 0x4000
 VK_LEFT, VK_UP, VK_RIGHT, VK_DOWN = 0x25, 0x26, 0x27, 0x28
-VK_L, VK_M, VK_N = 0x4C, 0x4D, 0x4E
+VK_L, VK_M, VK_N, VK_P = 0x4C, 0x4D, 0x4E, 0x50
 WM_HOTKEY, WM_QUIT = 0x0312, 0x0012
 BINDINGS = {
     1: (VK_RIGHT, "next_resource"),
     2: (VK_LEFT, "prev_resource"),
     3: (VK_UP, "cycle_vehicle"),
     4: (VK_DOWN, "toggle"),
+    5: (VK_P, "object_pin"),
     6: (VK_L, "lines"),
     7: (VK_M, "minimap"),
     8: (VK_N, "route_skip"),

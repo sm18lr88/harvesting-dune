@@ -111,8 +111,10 @@ def test_sweep_applies_retention(tmp_path):
     st.upsert_sightings("alpha001", "Paul", BG, DD, [record("ore", "magnetiteore", x=0.0)], NOW - 4 * 3600, NOW - 4 * 3600)
     st.upsert_sightings("alpha001", "Paul", BG, DD, [record("ship", "salvagesteel")], NOW - 20 * 3600, NOW - 20 * 3600)
     st.audit(NOW, "alpha001", "127.0.0.1", "sync", 200, 1)
+    gone = {"id": "pin1", "kind": "pin", "scope": None, "geometry": None, "body": "{}", "ttlS": 60}
+    st.upsert_objects("alpha001", ident, [gone], NOW - 25 * 3600)  # expired over 24 hours ago
     assert st.presence_for(BG, NOW) == []
-    assert st.sweep(NOW) == {"presence": 1, "sightings": 2, "audit": 0, "profiles": 0, "keys": 0}
+    assert st.sweep(NOW) == {"presence": 1, "sightings": 2, "audit": 0, "profiles": 0, "keys": 0, "objects": 1}
     rows, _ = st.sightings_since(BG, DD["worldId"], DD["layout"], 0)
     assert [r["cls"] for r in rows] == ["ship"]
     st.close()

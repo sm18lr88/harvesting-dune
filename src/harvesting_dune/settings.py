@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 from .catalog import BY_KEY, EXTRA_BY_KEY, MINIMAP_RESOURCES, RESOURCES
 from .fsutil import read_json, try_write_json
+from .objects import LABEL_MAX
 from .zones import ROWS
 
 if TYPE_CHECKING:
@@ -81,6 +82,8 @@ def _load_sync(det: Detector, s: dict) -> None:
         det.share_character = s["shareCharacter"]
     if isinstance(s.get("shareSession"), bool):
         det.share_session = s["shareSession"]
+    if isinstance(s.get("pinLabel"), str) and s["pinLabel"].strip():
+        det.pin_label = s["pinLabel"].strip()[:LABEL_MAX]
     hidden = s.get("syncHiddenMembers")
     if isinstance(hidden, list):
         det.sync_hidden_members = {m for m in hidden if isinstance(m, int) and not isinstance(m, bool)}
@@ -95,5 +98,5 @@ def save(det: Detector) -> None:
         "bases": {f"{w[0]}|{w[1]}": list(b) for w, b in det._bases.items() if w and w[0]},
         "syncKey": det.sync_key, "syncEnabled": det.sync_enabled, "syncPositions": det.sync_positions,
         "syncHiddenMembers": sorted(det.sync_hidden_members),
-        "shareCharacter": det.share_character, "shareSession": det.share_session,
+        "shareCharacter": det.share_character, "shareSession": det.share_session, "pinLabel": det.pin_label,
     }, "settings")

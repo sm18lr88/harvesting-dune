@@ -104,6 +104,51 @@ def test_a_reported_ship_you_reach_and_do_not_see_is_dropped_and_the_route_moves
     assert det.snapshot()["shipsReported"] == 1
 
 
+def test_the_next_ship_stays_the_target_until_another_is_clearly_nearer():
+    det = dd_detector()
+    det.ui("resource", "downed_ships")
+    north, south = SHIP_Y + 60_000, SHIP_Y - 64_000
+    det.scan.load_rows([{"type": "BP_SmallShipwreck_01_C", "map_marker_id": "salvagesteel", "x": SHIP_X, "y": y,
+                         "z": 0.0} for y in (north, south)], 200, 0)
+    pose(det, SHIP_X, SHIP_Y, t=1)
+    det.compute(1)
+    assert det.page_state()["dest"]["y"] == north
+    # live (journal-20261108-124343): 70 m of flight made the other ship 20 m nearer and the line flipped
+    pose(det, SHIP_X, SHIP_Y - 3_000, t=2)
+    det.compute(2)
+    assert det.page_state()["dest"]["y"] == north
+    pose(det, SHIP_X, SHIP_Y - 20_000, t=3)  # now 440 m against 800 m
+    det.compute(3)
+    assert det.page_state()["dest"]["y"] == south
+
+
+def test_the_next_ship_stays_the_target_when_the_ranking_leaves_it_unrouted(monkeypatch):
+    from harvesting_dune import ranking
+
+    det = dd_detector()
+    det.ui("resource", "downed_ships")
+    near, far = SHIP_Y + 60_000, SHIP_Y + 500_000
+    det.scan.load_rows([{"type": "BP_SmallShipwreck_01_C", "map_marker_id": "salvagesteel", "x": SHIP_X, "y": y,
+                         "z": 0.0} for y in (near, far)], 200, 0)
+    pose(det, SHIP_X, SHIP_Y, t=1)
+    det.compute(1)
+    assert det.page_state()["dest"]["y"] == near
+    rank = ranking.recommend
+
+    def pruned(*args, **kw):  # live: more valuable PvP ships filled the routed set
+        areas = rank(*args, **kw)
+        for a in areas:
+            if a.y == near:
+                a.feasible, a.reasons = False, ["cannot beat the areas above"]
+        return areas
+
+    monkeypatch.setattr(ranking, "recommend", pruned)
+    pose(det, SHIP_X, SHIP_Y + 3_000, t=2)
+    det.compute(2)
+    st = det.page_state()
+    assert st["dest"]["y"] == near and "kept as your next stop" in st["dest"]["detail"]
+
+
 def test_a_reported_ship_the_game_shows_stays():
     det = dd_detector()
     det.ui("resource", "downed_ships")

@@ -51,6 +51,7 @@ TOPICS = [
     "dune.landsraad",
 ]
 FORWARDED = {"dune.session", "dune.player", "dune.map.actors", "dune.status", "dune.rawStats", "dune.trackedSession",
+             "dune.trackedDestination",
              "dune.skillProgress", "dune.knownRecipes", "dune.achievements", "dune.landsraad"}
 BINDING = "__harvestingDuneEmit"
 _BRIDGE_TEMPLATE = (

@@ -14,6 +14,7 @@ from contextlib import contextmanager
 
 from .board import BoardMixin
 from .keystore import KeyStoreMixin
+from .objectstore import ObjectStoreMixin
 from .presence import PresenceStoreMixin
 from .profilestore import ProfileStoreMixin
 
@@ -68,10 +69,17 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         "ALTER TABLE keys ADD COLUMN renewed_at REAL",
         "UPDATE keys SET role = 'admin' WHERE id = '7cc09c11'",
     ),
+    (  # shared overlay objects (objectstore.py)
+        "CREATE TABLE objects(key_id TEXT NOT NULL, id TEXT NOT NULL, battlegroup TEXT NOT NULL,"
+        " character_id INTEGER NOT NULL, name TEXT NOT NULL, kind TEXT NOT NULL, scope_world TEXT,"
+        " scope_layout TEXT, geometry TEXT, body TEXT NOT NULL, expires_at REAL NOT NULL,"
+        " received_at REAL NOT NULL, rev INTEGER NOT NULL, PRIMARY KEY(key_id, id))",
+        "CREATE INDEX objects_group ON objects(battlegroup, rev)",
+    ),
 )
 
 
-class Storage(BoardMixin, KeyStoreMixin, PresenceStoreMixin, ProfileStoreMixin):
+class Storage(BoardMixin, KeyStoreMixin, PresenceStoreMixin, ProfileStoreMixin, ObjectStoreMixin):
     def __init__(self, conn: sqlite3.Connection, clock: Callable[[], float] = time.time) -> None:
         self._conn = conn
         self._lock = threading.Lock()
@@ -159,9 +167,11 @@ class Storage(BoardMixin, KeyStoreMixin, PresenceStoreMixin, ProfileStoreMixin):
                 f"DELETE FROM sightings WHERE cls NOT IN {_SHORT_CLASSES} AND ? - received_at + lag > ?", now, LONG_SIGHTING_S
             )
             keys = self.expire_idle_keys(c, now)
+            objects = self._sweep_objects(c, now)
             audit = delete("DELETE FROM audit WHERE ? - ts > ?", now, AUDIT_S)
             profiles = delete(
                 "DELETE FROM profiles WHERE ? - updated_at > ? AND NOT EXISTS (SELECT 1 FROM characters c"
                 " WHERE c.character_id = profiles.character_id AND ? - c.last_seen <= ?)", now, PROFILE_S, now, PROFILE_S
             )
-        return {"presence": presence, "sightings": short + long, "audit": audit, "profiles": profiles, "keys": keys}
+        return {"presence": presence, "sightings": short + long, "audit": audit, "profiles": profiles, "keys": keys,
+                "objects": objects}

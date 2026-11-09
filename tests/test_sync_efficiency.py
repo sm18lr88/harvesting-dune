@@ -1,9 +1,11 @@
 """Guild sync stays cheap (docs/SYNC-PROTOCOL.md "Cost"): requests per hour follow what the player
-does, a wake-up syncs at once, an unchanged answer redraws nothing, and every query a sync runs
-on the server uses an index."""
+does, a wake-up syncs at once, an unchanged answer redraws nothing, every query a sync runs
+on the server uses an index, and a restart refetches a bounded set of shared objects."""
 
 import asyncio
+import json
 import time
+from collections import Counter
 
 import pytest
 from guildsync.api import Api
@@ -142,11 +144,12 @@ def test_an_unchanged_answer_redraws_nothing_and_still_ages_members(tmp_path):
 
 def test_every_query_of_a_sync_and_a_profile_fetch_uses_an_index(tmp_path):
     st = Storage.open(str(tmp_path / "guild.db"))
-    api, key = Api(st, lambda: NOW), {"id": "alpha001"}
+    api, key = Api(st, lambda: NOW), {"id": st.issue_key("Alpha Test")[0]}
     body = {"since": 0, "sentAt": NOW, "identity": WHO, "partition": {"worldId": HAGGA, "layout": HAGGA},
             "position": {"x": 0.0, "y": 0.0, "z": 0.0, "observedAt": NOW},
             "records": [{"cls": "ore", "type": "magnetiteore", "x": 100.0, "y": 0.0, "z": 0.0, "observedAt": NOW,
-                         "fill": None, "size": None, "rowKey": None, "distCm": None}]}
+                         "fill": None, "size": None, "rowKey": None, "distCm": None}],
+            "objects": [pin("p1", 7200)]}
     profile = {"status": None, "skills": None, "stats": None, "recipes": None, "landsraad": None, "achievements": None, "session": None}
     statements: list[str] = []
     st._conn.set_trace_callback(statements.append)
@@ -160,4 +163,40 @@ def test_every_query_of_a_sync_and_a_profile_fetch_uses_an_index(tmp_path):
     for sql in queries:
         plan = [row[3] for row in st._conn.execute("EXPLAIN QUERY PLAN " + sql)]
         assert not [p for p in plan if p.startswith("SCAN")], (sql, plan)
+    st.close()
+
+
+def pin(oid: str, ttl: int) -> dict:
+    return {"id": oid, "kind": "pin", "scope": {"worldId": HAGGA, "layout": HAGGA},
+            "geometry": {"type": "point", "x": 100.0, "y": 0.0, "z": 0.0}, "body": {"label": "IRON HERE"}, "ttlS": ttl}
+
+
+def test_a_restart_refetch_of_objects_is_bounded_by_the_caps(tmp_path):
+    st = Storage.open(str(tmp_path / "guild.db"))
+    api = Api(st, lambda: NOW)
+
+    def sync(n: int, since: int = 0, objects: list | None = None) -> dict:
+        who = {"characterName": f"Alpha Test {n}", "characterId": 3000 + n, "battlegroupId": GROUP}
+        body = {"since": since, "sentAt": NOW, "identity": who, "partition": {"worldId": HAGGA, "layout": HAGGA},
+                "position": None, "records": [], **({"objects": objects} if objects else {})}
+        status, resp = api.sync({"id": keys[n]}, body, "127.0.0.1", NOW)
+        assert status == 200, resp
+        return resp
+
+    keys = [st.issue_key(f"Alpha Test {n}")[0] for n in range(17)]
+    for n in range(15):  # every key at its live cap: the battlegroup at its cap
+        sync(n, objects=[pin(f"p{i}", 7200) for i in range(20)])
+    for batch in range(5):  # a sixteenth key's 100 deletes: its row ceiling
+        sync(15, objects=[pin(f"d{batch}_{i}", 0) for i in range(20)])
+    since, requests, got, size = 0, 0, Counter(), 0
+    while True:
+        resp = sync(16, since)
+        requests += 1
+        got.update((o["playerTag"], o["id"]) for o in resp["objects"])
+        size += len(json.dumps(resp["objects"]))
+        since = resp["next"]
+        if len(resp["objects"]) < 200:
+            break
+    assert requests <= 3 and len(got) == 400 and set(got.values()) == {1}
+    assert size < 300_000
     st.close()

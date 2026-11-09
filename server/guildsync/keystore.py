@@ -18,6 +18,7 @@ _SECRET_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0
 _KEY_COLS = "id, label, note, created_at, revoked_at, last_seen, last_ip, role, expired_at, renewed_at"
 _IDLE_SINCE = "MAX(COALESCE(last_seen, created_at), COALESCE(renewed_at, created_at))"
 _ACTIVE_REGULAR = (f"role = 'regular' AND revoked_at IS NULL AND expired_at IS NULL AND ? - {_IDLE_SINCE} <= {KEY_IDLE_S}")
+_IDLE_REGULAR = f"role = 'regular' AND revoked_at IS NULL AND expired_at IS NULL AND ? - {_IDLE_SINCE} > {KEY_IDLE_S}"
 
 
 class KeyCapFull(Exception):
@@ -57,7 +58,7 @@ def _split(token: str) -> tuple[str, str] | None:
 
 
 class KeyStoreMixin:
-    """Mixed into storage.Storage, which provides `_conn`, `_tx`, `clock` and `_presence_left`."""
+    """Mixed into storage.Storage, which provides `_conn`, `_tx`, `clock`, `_presence_left` and `_objects_left`."""
 
     def active_regular(self, now: float, conn=None) -> int:
         return (conn or self._conn).execute(f"SELECT COUNT(*) FROM keys WHERE {_ACTIVE_REGULAR}", (now,)).fetchone()[0]
@@ -104,6 +105,7 @@ class KeyStoreMixin:
                 return "already"
             c.execute("UPDATE keys SET revoked_at = ? WHERE id = ?", (now, key_id))
             self._presence_left(c, key_id, now)
+            self._objects_left(c, key_id, now)
             return "revoked"
 
     def renew_key(self, key_id: str, now: float) -> str:
@@ -121,11 +123,12 @@ class KeyStoreMixin:
             return "renewed"
 
     def expire_idle_keys(self, c, now: float) -> int:
-        """The sweep's part: record `expired_at` on regular keys idle past KEY_IDLE_S."""
-        return c.execute(
-            f"UPDATE keys SET expired_at = ? WHERE role = 'regular' AND revoked_at IS NULL AND expired_at IS NULL"
-            f" AND ? - {_IDLE_SINCE} > {KEY_IDLE_S}", (now, now),
-        ).rowcount
+        """The sweep's part: record `expired_at` on regular keys idle past KEY_IDLE_S and end their objects."""
+        ids = [r[0] for r in c.execute(f"SELECT id FROM keys WHERE {_IDLE_REGULAR}", (now,))]
+        c.executemany("UPDATE keys SET expired_at = ? WHERE id = ?", [(now, key_id) for key_id in ids])
+        for key_id in ids:
+            self._objects_left(c, key_id, now)
+        return len(ids)
 
     def list_keys(self) -> list[dict]:
         """Every key with its state, its characters (newest first) and its last presence world."""

@@ -44,7 +44,9 @@ def _key_sets(part: str) -> set[frozenset]:
 def assert_contract_request(body: dict) -> None:
     [first] = [c["request"]["body"] for c in SYNC_CASES if c["name"] == "first-poll"]
     [beat] = [c["request"]["body"] for c in SYNC_CASES if c["name"] == "presence-leaving"]
-    assert set(body) == set(beat) and set(body["presence"]) == set(beat["presence"])  # this client always sends presence
+    [pin] = [c["request"]["body"]["objects"][0] for c in SYNC_CASES if c["name"] == "object-publish"]
+    assert all(set(o) == set(pin) for o in body.get("objects", []))  # optional: only staged objects, only after the server showed the key
+    assert set(body) - {"objects"} == set(beat) and set(body["presence"]) == set(beat["presence"])  # this client always sends presence
     for part in ("identity", "partition"):
         assert set(body[part]) == set(first[part])
     assert body["position"] is None or set(body["position"]) == set(first["position"])

@@ -1,6 +1,7 @@
 """The settings page's Guild section, run in Node against a real detector snapshot: status words,
-the roster with its tick boxes, shared finds (live ore too), the Characters view, and a key that only
-ever travels once, in the body of POST /sync/key."""
+the roster with its tick boxes, shared finds (live ore too), the Pins block (your own pins with Delete,
+the hotkey label, the drop field), the Characters view, and a key that only ever travels once, in the
+body of POST /sync/key."""
 
 import json
 import shutil
@@ -59,22 +60,38 @@ def sighting(cls, x, age, marker, size=None):
             "worldId": DD, "layout": LAYOUT}
 
 
-def snapshot(tmp_path) -> dict:
+def shared(oid, kind, cid, name, tag, body, x=None, y=None, scope=True, ttl=7200, age=0, rev=1):
+    """One object as the server echoes it (docs/SYNC-PROTOCOL.md "Objects"); no x = positionless."""
+    return {"id": oid, "kind": kind, "scope": {"worldId": DD, "layout": LAYOUT} if scope else None,
+            "geometry": None if x is None else {"type": "point", "x": x, "y": y, "z": 0.0}, "body": body,
+            "ttlS": ttl, "ageS": age, "characterId": cid, "characterName": name, "playerTag": tag, "rev": rev}
+
+
+def snapshot(tmp_path, label="IRON HERE") -> dict:
     """A real snapshot: synced with a valid key, us plus two guildmates online (one hidden from
-    the minimap), a fresh, a middle-aged and an old find, and a live iron node."""
+    the minimap), a fresh, a middle-aged and an old find, a live iron node, a companion destination,
+    and four shared objects: two pins of ours (the newer one where we stand, the older one at the
+    destination), a guildmate's pin and a positionless note."""
     det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
     det.set_sync_key(KEY)
     session(det, DD)
     det.map_files[det.store.world] = LAYOUT
     det.handle(BusMessage("delta", "dune.trackedSession", ME), 0)
     pose(det, 0, 0, t=1)
+    det.handle(BusMessage("delta", "dune.trackedDestination", {"hasDestination": True, "x": 250000.0, "y": 100000.0, "z": 0.0}), 1)
     det.ingest_peer({"now": time.time(), "next": 5, "keyState": "valid",
                      "presence": [member(1001, "Paul Test", 0.0, 0.0), member(1002, "Chani Test", 150000.0, 0.0),
                                   member(1003, "Stilgar Test", 5000000.0, 5000000.0)],
                      "sightings": [sighting("spice", 1000.0, 60.0, "spicefieldlarge", "large"),
                                    sighting("blow", 2000.0, 1500.0, "spicefieldmedium", "medium"),
                                    sighting("ship", 3000.0, 1700.0, "downedship"),
-                                   sighting("ore", 4000.0, 900.0, "magnetiteore")]}, time.time())
+                                   sighting("ore", 4000.0, 900.0, "magnetiteore")],
+                     "objects": [shared("p1", "pin", 1001, "Paul Test", "0a0a0a0a", {"label": label}, 0.0, 0.0, rev=1),
+                                 shared("p2", "pin", 1001, "Paul Test", "0a0a0a0a", {"label": "MEET HERE"}, 250000.0, 100000.0,
+                                        ttl=2700, age=4500, rev=2),
+                                 shared("c1", "pin", 1002, "Chani Test", "1b1b1b1b", {"label": "SPICE"}, 150000.0, 0.0, rev=3),
+                                 shared("n1", "note", 1002, "Chani Test", "1b1b1b1b", {"text": "meet at the blow"}, scope=False, rev=4)]},
+                    time.time())
     det.peers.connected_as = "Paul Test"  # what the sync loop records after an accepted exchange
     det.ui("sync_member", "1003")  # Stilgar stays off my minimap
     return det.snapshot()
@@ -154,6 +171,82 @@ def test_a_roster_tick_box_toggles_that_guildmate_on_my_minimap(tmp_path):
       log.urls = calls.map((c) => c.url);
     """)
     assert "/control?action=sync_member&value=1003" in log["urls"]
+
+
+def test_the_pins_block_lists_my_pins_with_delete_and_the_hotkey_label(tmp_path):
+    snap = snapshot(tmp_path)
+    log = run(snap, """
+      page.render(SNAP);
+      log.hidden = el("gPins").hidden; log.mine = el("gMine").innerHTML; log.preset = el("gPinPreset").value;
+      log.where = el("gPinWhere").textContent; log.note = el("gPinNote").textContent; log.sum = el("sum-guild").textContent;
+      const o = SNAP.peers.objects, withObjects = (more) => ({ ...SNAP, peers: { ...SNAP.peers, objects: { ...o, ...more } } });
+      page.render(withObjects({ pending: 1 })); log.pending = el("gPinNote").textContent;
+      page.render(withObjects({ pending: 1, note: "wait a moment" })); log.refused = el("gPinNote").textContent;
+      page.render(withObjects({ mine: [], here: 0, where: null })); log.none = el("gMine").innerHTML;
+      log.sumNone = el("sum-guild").textContent; log.whereNone = el("gPinWhere").textContent;
+      document.activeElement = el("gPinPreset"); el("gPinPreset").value = "ME"; page.render(SNAP);
+      log.typing = el("gPinPreset").value;
+    """)
+    o = snap["peers"]["objects"]
+    assert log["hidden"] is False and log["preset"] == "PIN" and log["note"] == ""
+    mine = log["mine"]
+    assert mine.count("data-gobjdel=") == 2 and 'data-gobjdel="p1"' in mine and 'data-gobjdel="p2"' in mine
+    assert "IRON HERE" in mine and "MEET HERE" in mine
+    assert f"<td>Deep Desert {o['mine'][0]['sector']}</td>" in mine and '<td class="nw">2.0 h</td>' in mine  # the fresh pin
+    assert f"<td>Deep Desert {o['mine'][1]['sector']}</td>" in mine and '<td class="nw">45 min</td>' in mine  # the older one
+    assert "SPICE" not in mine and "Chani" not in mine and "meet at the blow" not in mine  # only yours are listed
+    assert log["where"] == "at your companion destination" and log["whereNone"] == "no position yet"
+    assert log["sum"].endswith(f"{o['here']} pins") and o["here"] == 3 and "pins" not in log["sumNone"]
+    assert log["pending"] == "sending 1\u2026" and log["refused"] == "wait a moment"  # the detector's reason wins
+    assert "data-gobjdel" not in log["none"] and 'class="note"' in log["none"]
+    assert log["typing"] == "ME"  # a render never overwrites what you are typing
+
+
+def test_drop_pin_posts_the_label_once_and_ignores_blanks(tmp_path):
+    log = run(snapshot(tmp_path), """
+      page.render(SNAP);
+      el("gPinText").value = "  IRON HERE "; el("gPinDrop").onclick(); await tick();
+      log.afterClick = el("gPinText").value;
+      el("gPinText").value = "   "; el("gPinDrop").onclick(); await tick();
+      el("gPinText").value = "MEET"; el("gPinText").onkeydown({ key: "Enter", preventDefault() {} }); await tick();
+      el("gPinText").value = "x"; el("gPinText").onkeydown({ key: "a", preventDefault() {} }); await tick();
+      el("gPinPreset").onchange({ target: { value: " MEET " } }); el("gPinPreset").onchange({ target: { value: "  " } }); await tick();
+      log.pins = calls.filter((c) => c.url.includes("action=object_pin")).map((c) => [c.url, c.method]);
+      log.presets = calls.filter((c) => c.url.includes("action=pin_label")).map((c) => c.url);
+    """)
+    assert log["pins"] == [["/control?action=object_pin&value=IRON%20HERE", "POST"], ["/control?action=object_pin&value=MEET", "POST"]]
+    assert log["afterClick"] == ""  # the field is ready for the next pin
+    assert log["presets"] == ["/control?action=pin_label&value=MEET"]
+
+
+def test_delete_posts_object_delete_with_the_row_id(tmp_path):
+    log = run(snapshot(tmp_path), """
+      page.render(SNAP);
+      const hit = (sel) => sel.includes("[data-gobjdel]") ? { dataset: { gobjdel: "p2" } } : null;
+      docListeners.click.forEach((fn) => fn({ target: { closest: hit } }));
+      await tick();
+      log.deletes = calls.filter((c) => c.url.includes("action=object_delete")).map((c) => [c.url, c.method]);
+    """)
+    assert log["deletes"] == [["/control?action=object_delete&value=p2", "POST"]]
+
+
+def test_an_older_detector_without_objects_hides_the_block(tmp_path):
+    log = run(snapshot(tmp_path), """
+      const old = { ...SNAP, peers: { ...SNAP.peers } }; delete old.peers.objects;
+      page.render(old);
+      log.hidden = el("gPins").hidden; log.sum = el("sum-guild").textContent; log.members = el("gMembers").innerHTML;
+    """)
+    assert log["hidden"] is True and "pins" not in log["sum"]
+    assert "Chani Test" in log["members"] and "4 shared" in log["sum"]  # the rest of the section rendered
+
+
+def test_peer_text_is_escaped_in_the_pins_block(tmp_path):
+    log = run(snapshot(tmp_path, label="<img src=x>"), """
+      page.render(SNAP);
+      log.mine = el("gMine").innerHTML;
+      log.raw = Object.values(els).some((e) => String(e.innerHTML + e.textContent + e.value).includes("<img"));
+    """)
+    assert "&lt;img src=x&gt;" in log["mine"] and log["raw"] is False
 
 
 def characters(tmp_path) -> tuple[dict, dict, dict]:

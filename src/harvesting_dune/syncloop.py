@@ -30,6 +30,7 @@ from dataclasses import dataclass
 
 from . import logsetup
 from .gate import REFUSED
+from .objects import OBJECTS_PAGE
 from .peers import MAX_RECORDS
 from .sync import BACKOFF_S, SyncClient, SyncError, SyncRejected, SyncServerError, SyncThrottled, SyncTls
 
@@ -75,7 +76,7 @@ def gap(det, client: SyncClient, pace: Pace) -> float:
         return AWAY_S
     pose = det.store.pose
     moved = pose is not None and (pace.at is None or _moved(pose, pace.at))
-    queued = pace.full or bool(det.peers.outbox) or bool(client.pending)
+    queued = pace.full or bool(det.peers.outbox) or bool(client.pending) or bool(det.objects_upload())
     return FAST_S if moved or queued else CALM_S
 
 
@@ -94,7 +95,7 @@ def _promise(det, pace: Pace, sent: list[dict]) -> float:
         return AWAY_S
     pose = det.store.pose
     moving = pose is not None and pace.at is not None and _moved(pose, pace.at)
-    return FAST_S if moving or len(sent) >= MAX_RECORDS or det.peers.outbox else CALM_S
+    return FAST_S if moving or len(sent) >= MAX_RECORDS or det.peers.outbox or det.objects_upload() else CALM_S
 
 
 def _leaving(det, bye: dict) -> dict:
@@ -129,6 +130,26 @@ def _failed(det, key: str, exc: SyncError, failures: int) -> tuple[float, int]:
             return wait, failures + 1
 
 
+def _objects_refusal(exc: SyncServerError) -> bool:
+    """A 400 whose problem names a field under `objects` (the note is "<type> <field>")."""
+    parts = exc.note.split(" ")
+    return exc.status == 400 and len(parts) == 2 and parts[1].startswith("objects")
+
+
+async def _exchange(det, client: SyncClient, key: str, body: dict, pace: Pace) -> dict | None:
+    """The sync request; None when the server refused only the staged objects: they are dropped with a
+    note and the sync goes again at once without them, so presence and finds never wait on a pin."""
+    try:
+        return await asyncio.to_thread(client.exchange, key, body)
+    except SyncServerError as exc:
+        if "objects" not in body or not _objects_refusal(exc):
+            raise
+        logsetup.limited(log, "sync:objects", "guild server refused the staged objects (%s)", exc.note, level=logging.WARNING)
+        det.objects_refused(exc.note)
+    pace.forced = True
+    return None
+
+
 async def _sync(det, client: SyncClient, key: str, pace: Pace) -> bool:
     """One sync if there is something we may publish (identity and partition known); True if sent."""
     now = time.time()
@@ -139,17 +160,23 @@ async def _sync(det, client: SyncClient, key: str, pace: Pace) -> bool:
     promise = _promise(det, pace, sent)
     body.update(records=sent, since=det.peers.since, sentAt=now,
                 presence={"nextS": int(promise), "inGame": _in_world(det), "leaving": False})
-    resp = await asyncio.to_thread(client.exchange, key, body)
+    uploads = det.objects_upload()
+    if uploads:
+        body["objects"] = uploads
+    resp = await _exchange(det, client, key, body, pace)
+    if resp is None:
+        return False
     det.key_checked(time.time())
     pace.promised = promise
     client.ack(sent)
+    det.objects_sent(uploads)
     det.ingest_peer(resp, time.time())
     det.peers.last_error, det.peers.connected_as = None, body["identity"]["characterName"]
     pose = det.store.pose
-    rows = resp.get("sightings")
+    rows, objs = resp.get("sightings"), resp.get("objects")
     pace.since_s, pace.at = 0.0, (pose.x, pose.y) if pose is not None else None
     pace.full = len(sent) >= MAX_RECORDS
-    pace.forced = isinstance(rows, list) and len(rows) >= SIGHTINGS_PAGE
+    pace.forced = (isinstance(rows, list) and len(rows) >= SIGHTINGS_PAGE) or (isinstance(objs, list) and len(objs) >= OBJECTS_PAGE)
     return True
 
 

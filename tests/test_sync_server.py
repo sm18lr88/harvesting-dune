@@ -35,6 +35,9 @@ PROFILE_COLS = {"characterId": "character_id", "keyId": "key_id", "battlegroupId
 PRESENCE_COLS = {"keyId": "key_id", "characterId": "character_id", "characterName": "name", "battlegroupId": "battlegroup",
                  "worldId": "world", "layout": "layout", "x": "x", "y": "y", "z": "z", "receivedAt": "received_at", "lag": "lag",
                  "nextS": "next_s", "inGame": "in_game", "leftAt": "left_at"}
+OBJECT_COLS = {"keyId": "key_id", "id": "id", "battlegroupId": "battlegroup", "characterId": "character_id",
+               "characterName": "name", "kind": "kind", "worldId": "scope_world", "layout": "scope_layout",
+               "expiresAt": "expires_at", "receivedAt": "received_at", "rev": "rev"}  # geometry, body: JSON text
 
 
 def _insert(db: sqlite3.Connection, table: str, row: dict) -> None:
@@ -52,6 +55,18 @@ def _sighting_row(s: dict) -> dict:
     return {"key": json.dumps(cell), **{c: s[f] for f, c in SIGHTING_COLS.items()}, "observers": json.dumps(sorted(s["observers"]))}
 
 
+def _given_objects(given: dict) -> list[dict]:
+    filler = given.get("fillerObjects", {"count": 0, "template": {}})
+    extra = [{**filler["template"], "id": f"f{i}", "rev": i} for i in range(1, filler["count"] + 1)]
+    return given["rows"].get("objects", []) + extra
+
+
+def _object_row(o: dict) -> dict:
+    geometry = None if o["geometry"] is None else json.dumps(o["geometry"])
+    body = json.dumps(o["body"], separators=(",", ":"), sort_keys=True)
+    return {**{c: o[f] for f, c in OBJECT_COLS.items()}, "geometry": geometry, "body": body}
+
+
 def _seed(path: Path, case: dict) -> None:
     """The fixture keys and `given` rows, written straight into the server's SQLite file."""
     given = case["given"]
@@ -65,6 +80,8 @@ def _seed(path: Path, case: dict) -> None:
             _insert(db, "presence", {c: p[f] for f, c in PRESENCE_COLS.items() if f in p})
         for p in given["rows"].get("profiles", []):
             _insert(db, "profiles", {**{c: p[f] for f, c in PROFILE_COLS.items()}, "body": json.dumps(p["profile"], separators=(",", ":"), sort_keys=True)})
+        for o in _given_objects(given):
+            _insert(db, "objects", _object_row(o))
         db.execute("UPDATE meta SET v = ? WHERE k = 'rev'", (str(given["rev"]),))
         db.execute("UPDATE meta SET v = ? WHERE k = 'profile_rev'", (str(given.get("profileRev", 0)),))
     db.close()
@@ -82,6 +99,9 @@ def _stored(path: Path) -> dict[str, list[dict]]:
         out["presence"] = [{f: r[c] for f, c in PRESENCE_COLS.items()} for r in db.execute("SELECT * FROM presence")]
         out["profiles"] = [{**{f: r[c] for f, c in PROFILE_COLS.items()}, "profile": json.loads(r["body"])}
                            for r in db.execute("SELECT * FROM profiles")]
+        out["objects"] = [{**{f: r[c] for f, c in OBJECT_COLS.items()}, "body": json.loads(r["body"]),
+                           "geometry": None if r["geometry"] is None else json.loads(r["geometry"])}
+                          for r in db.execute("SELECT * FROM objects")]
     db.close()
     return out
 

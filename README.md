@@ -125,6 +125,7 @@ An example of the badge: `Stravidium Mass · thopter · best 1.2 km · 65 nodes 
 | `Ctrl+Alt+L` | Turn the lines on or off. |
 | `Ctrl+Alt+M` | Show or hide the companion's minimap, whatever you do: on foot, in combat, in any vehicle, while building. |
 | `Ctrl+Alt+N` | Farm route: skip to the next stop. |
+| `Ctrl+Alt+P` | Drop a guild pin with your preset label (see Pins under Guild sync). |
 
 The companion's own "Toggle Minimap" key keeps its widget visibility settings, so it cannot show the minimap where those settings hide it. `Ctrl+Alt+M` changes those settings: it shows the minimap in every activity, or turns it off.
 
@@ -184,6 +185,8 @@ What you see from the guild:
 Guild data never changes the ranking. It only draws rings and lists. A scan row is hidden only when two guildmates confirmed it as stale.
 
 Your own eyes always win. If you see a node live, a guild report never hides it. A node grows back after its respawn time. So a guild report hides a node only until that time has passed. Then the node shows again. A downed ship never comes back, so its report hides it until the report expires.
+
+**Pins:** a pin is a short label on the guild's minimap, like "IRON HERE". Press the pin hotkey (see Hotkeys) to drop a pin with your preset label. You can also type a label on the settings page, in the **Guild** section, and click **Drop pin**. The same field sets your preset label. The pin lands at the destination you set in the companion. With no destination, it lands where you stand. Every guildmate on the same map and layout sees a ring with your label. A pin goes away after two hours. Your own pins are listed on the settings page, and **Delete** removes one for everyone. If you hide a guildmate, you hide that guildmate's pins too. Pins never change the lines or the ranking.
 
 **Pause sync** stops all sending and receiving. Your key stays saved.
 

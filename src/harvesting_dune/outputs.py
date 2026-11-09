@@ -8,6 +8,7 @@ Contract with bridge.js (`__dd.set(page_state())`):
                                                               farm route: "route-stop" rings carry `num` (drawn inside), "route-done" rings are dim
     stale: [row key]                                          -> scan rows the page must drop
     extraActors: [actor]                                      -> overlay markers we add
+    objects: [{id, kind, x, y, z, body, mine, ageS, ttlS, by}] -> guild objects for this map (objects.py); bridge.js draws known kinds only
     problem: {id, text} | None                                -> notice in the map window after an error
 `badge()` is the one-line minimap text; `picker()` feeds the map window's picker.
 With the gate closed (gate.py) every key is empty and the badge is None: the detector draws nothing.
@@ -115,7 +116,8 @@ class OutputsMixin:
 
     def page_state(self) -> dict:
         if not self.gate_open():
-            return {"dest": None, "route": None, "alternatives": [], "stale": [], "extraActors": [], "problem": None}
+            return {"dest": None, "route": None, "alternatives": [], "stale": [], "extraActors": [], "problem": None,
+                    "objects": []}
         self.peer_expire(self.clock)
         scan_stale = list(self.scan.stale)
         state = {
@@ -132,6 +134,7 @@ class OutputsMixin:
         else:
             self._targets(state)
         state["alternatives"] = state.get("alternatives", []) + self.peer_marks()  # guild rings, never ranked
+        state["objects"] = self.object_marks()
         return state
 
     def _targets(self, state: dict) -> None:

@@ -16,6 +16,8 @@ import math
 from . import logsetup
 from .catalog import NODE_MARKERS, resource_of
 from .corrections import MATCH_CM, stale_ttl_s
+from .datacache import key_id
+from .mined import SAME_NODE_CM
 from .ships import REMEMBER_S as SHIP_REMEMBER_S
 from .store import REMEMBER_SPICE_S, Status
 from .zones import DEFAULT_FIT, cell_name, is_deep_desert
@@ -120,6 +122,8 @@ class PeerViewMixin:
         here = (group, part["worldId"], part["layout"]) if part and group else None
         drew = self._merge_sightings(response.get("sightings"), here)
         drew |= self._merge_members(response.get("presence"), group)
+        if "objects" in response:
+            drew |= self._merge_objects(response["objects"])
         if drew:
             self._changed()
 
@@ -175,6 +179,7 @@ class PeerViewMixin:
             del sightings[k]
         for k in [k for k, m in members.items() if now - m["seen_at"] > MEMBER_KEEP_S]:
             del members[k]
+        self.objects_expire(now)
 
     # -- what is shown -------------------------------------------------------------------------
     def _peer_here(self) -> tuple[str, str] | None:
@@ -185,6 +190,19 @@ class PeerViewMixin:
         here = self._peer_here()
         return [s for s in self.peers.sightings.values() if (s["worldId"], s["layout"]) == here]
 
+    def _ore_ours(self, s: dict, seen: list) -> bool:
+        """Our own companion covers this node: it marks it live itself, or we saw it gone or mined it."""
+        return self.mined_nodes.is_mined(s["type"], s["x"], s["y"]) or any(
+            a.marker == s["type"] and abs(a.x - s["x"]) <= SAME_NODE_CM and abs(a.y - s["y"]) <= SAME_NODE_CM
+            for a in seen)
+
+    def _shows_peer_ring(self, s: dict, mine: set, seen: list) -> bool:
+        """A guild ring adds something: not our own row sent back by the server (a find only our key
+        reported is already on our map), and not an ore node our own companion already covers."""
+        if s["cls"] not in RINGS or s["observers"] == mine:
+            return False
+        return not (s["cls"] == "ore" and self._ore_ours(s, seen))
+
     def _nearest(self, items: list[dict], limit: int) -> list[dict]:
         pose = self.store.pose
         if pose is not None:
@@ -193,17 +211,23 @@ class PeerViewMixin:
             items.sort(key=lambda d: -d["seen_at"])
         return items[:limit]
 
-    def peer_marks(self) -> list[dict]:
-        """Rings for shared spice, blows, ships, ore and the guildmates you chose to show, faded by age."""
-        if not self.enabled:
-            return []
-        out = []
+    def _sighting_rings(self) -> list[dict]:
+        """Rings for the guild's shared finds here that add something to our own map, faded by age."""
+        out, mine = [], {key_id(self.sync_key)}
+        seen = [t.actor for t in self.store.items.values() if t.status is not Status.OUT_OF_RANGE]
         for s in self._here_sightings():
-            if s["cls"] in RINGS:
+            if self._shows_peer_ring(s, mine, seen):
                 ring, colour = RINGS[s["cls"]]
                 alpha = _alpha(self.clock - s["seen_at"], self.peer_lifetime(s["cls"], s["type"]))
                 out.append({"x": s["x"], "y": s["y"], "size": None, "kind": "peer", "ring": ring,
                             "color": colour.format(alpha), "weight": 2, "seen_at": s["seen_at"]})
+        return out
+
+    def peer_marks(self) -> list[dict]:
+        """Rings for shared spice, blows, ships, ore and the guildmates you chose to show, faded by age."""
+        if not self.enabled:
+            return []
+        out = self._sighting_rings()
         here, me = self._peer_here(), self.identity.get("characterId")
         for cid, m in self.peers.members.items():
             if cid == me or cid in self.sync_hidden_members or not _ringed(m) or (m["worldId"], m["layout"]) != here:

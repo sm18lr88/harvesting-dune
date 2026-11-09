@@ -324,6 +324,14 @@
         <div><strong>Members</strong> <span class="note">ticked = drawn on your minimap</span><div id="gMembers"></div></div>
         <div><strong>Shared finds</strong> <span class="note">nearest first</span><div id="gSightings"></div></div>
       </div>
+      <div class="cols" id="gPins" hidden>
+        <div>
+          <div class="inline"><strong>Pins</strong> <span class="note">a ring with a short label on every guildmate's minimap for 2 h</span></div>
+          <div class="inline"><input type="text" id="gPinText" maxlength="16" autocomplete="off" spellcheck="false" placeholder="two words" aria-label="Pin label"><button type="button" id="gPinDrop">Drop pin</button><span class="note" id="gPinWhere"></span></div>
+          <div class="inline"><label class="inline">Ctrl+Alt+P drops <input type="text" id="gPinPreset" maxlength="16" autocomplete="off" spellcheck="false" aria-label="Hotkey pin label"></label><span class="note" id="gPinNote" role="status"></span></div>
+          <div id="gMine"></div>
+        </div>
+      </div>
     </div>
   </details>
   </div>
@@ -443,9 +451,10 @@ $("pvpOnly").onchange = () => post("pvp_only");
 $("maxKm").onchange = (e) => post("max_km", e.target.value || "0");
 // generated buttons and tick boxes: one listener each, so re-rendering never loses a handler
 document.addEventListener("click", (ev) => {
-  const b = ev.target.closest("[data-pick],[data-go],[data-route],[data-farm]");
+  const b = ev.target.closest("[data-pick],[data-go],[data-route],[data-farm],[data-gobjdel]");
   if (!b || b.disabled) return;
-  if (b.dataset.route) post("route_start", b.dataset.route);
+  if (b.dataset.gobjdel) post("object_delete", b.dataset.gobjdel);  // one of your guild pins
+  else if (b.dataset.route) post("route_start", b.dataset.route);
   else if (b.dataset.farm) post(b.dataset.farm);
   else if (b.dataset.pick) pick(b.dataset.pick); else post("resource", b.dataset.go);
 });
@@ -758,6 +767,8 @@ const presence = (state, age) => {
 };
 const playing = (m) => !m.state || m.state === "online" || m.state === "in_menu";
 const near = (m) => m == null ? "" : m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m / 100) * 100} m`;
+const left = (s) => s < 3600 ? `${Math.max(1, Math.round(s / 60))} min` : `${(s / 3600).toFixed(1)} h`;  // a pin's remaining time
+const pinWhere = (m) => m.worldId == null ? "everywhere" : [WORLDS[m.worldId] || m.worldId, m.sector].filter(Boolean).join(" ");
 const typeName = (t) => String(t || "").replace(/(ore|rock|crystal|mass)$/, " $1").replace(/^./, (c) => c.toUpperCase());
 const findText = (f) => {
   switch (f.cls) {
@@ -813,6 +824,24 @@ $("gRemove").onclick = () => fetch("/sync/key", { method: "POST", headers: { "Co
   .catch(() => keyFailed("not removed: the detector is not running"));
 $("gPause").onchange = () => post("sync_pause");
 $("gPos").onchange = () => post("sync_positions");
+// guild pins: the typed label goes out once; the preset is what Ctrl+Alt+P drops (hotkeys.py)
+const dropPin = () => { const v = $("gPinText").value.trim(); if (!v) return; post("object_pin", v); $("gPinText").value = ""; };
+$("gPinDrop").onclick = dropPin;
+$("gPinText").onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); dropPin(); } };
+$("gPinPreset").onchange = (e) => { const v = e.target.value.trim(); if (v) post("pin_label", v); };
+// only your own pins are listed (with Delete); the guild's are a count in the summary line
+const renderPins = (o) => {
+  text("gPinWhere", o.where === "destination" ? "at your companion destination" : o.where === "position" ? "where you stand" : "no position yet");
+  const preset = $("gPinPreset"), label = o.hotkeyLabel || "";
+  if (idle(preset) && preset.value !== label) preset.value = label;
+  text("gPinNote", o.note || (o.pending ? `sending ${o.pending}\u2026` : ""));
+  const mine = o.mine || [];
+  swap("gMine", mine.length
+    ? `<div class="table-wrap"><table class="data"><thead><tr><th>Label</th><th>Where</th><th>Left</th><th></th></tr></thead><tbody>`
+      + mine.map((m) => `<tr><td>${esc(m.label)}</td><td>${esc(pinWhere(m))}</td><td class="nw">${left(m.ttlS)}</td><td><button type="button" data-gobjdel="${esc(m.id)}">Delete</button></td></tr>`).join("")
+      + `</tbody></table></div>`
+    : `<p class="note">No pins of yours. Type two words and drop one, or press Ctrl+Alt+P.</p>`);
+};
 const renderGuild = (s) => {
   const p = s.peers;
   if (!p) return;  // an older detector has no guild sync
@@ -834,9 +863,12 @@ const renderGuild = (s) => {
     ? `<div class="table-wrap"><table class="data"><thead><tr><th>Find</th><th>Age</th><th>By</th><th class="num">Dist</th></tr></thead><tbody>`
       + finds.map((f) => `<tr><td>${esc(findText(f))}</td><td class="nw">${ageText(f)}</td><td class="nw">${esc(f.observer || "?")}</td><td class="num">${dist(f.distanceM)}</td></tr>`).join("") + `</tbody></table></div>`
     : `<p class="note">Nothing shared on this map yet.</p>`);
-  const online = members.filter((m) => !m.self && playing(m)).length;
-  text("sum-guild", !p.keySet ? "off: no key" : p.keyState === "invalid" ? "key rejected" : p.keyState === "expired" ? "key expired" : !p.enabled ? `paused · ${online} online`
-    : `${online} online · ${finds.length} shared · ${p.lastSyncAgeS == null ? "not synced yet" : `synced ${ago(p.lastSyncAgeS)}`}`);
+  const o = p.objects;  // an older detector has no shared objects
+  $("gPins").hidden = !o;
+  if (o) renderPins(o);
+  const online = members.filter((m) => !m.self && playing(m)).length, pins = o && o.here > 0 ? ` · ${o.here} pins` : "";
+  text("sum-guild", (!p.keySet ? "off: no key" : p.keyState === "invalid" ? "key rejected" : p.keyState === "expired" ? "key expired" : !p.enabled ? `paused · ${online} online`
+    : `${online} online · ${finds.length} shared · ${p.lastSyncAgeS == null ? "not synced yet" : `synced ${ago(p.lastSyncAgeS)}`}`) + pins);
 };
 
 // -- characters -------------------------------------------------------------------------------

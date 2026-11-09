@@ -385,3 +385,102 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     out = subprocess.run(["node", "-"], input=code, capture_output=True, text=True, timeout=30, check=False)
     assert out.returncode == 0, out.stderr
     assert json.loads(out.stdout.splitlines()[0])["redraws"] == 2
+
+
+DRAW = r"""
+const listeners = [], posted = [], emitted = [], page = {}, seen = [];
+const wv = { postMessage: (m) => posted.push(m), addEventListener: (_, f) => listeners.push(f), removeEventListener() {},
+  dispatchEvent: (e) => { for (const f of [...listeners]) f(e); } };
+globalThis.window = globalThis; globalThis.chrome = { webview: wv };
+globalThis.location = { pathname: '/dune/minimap' };
+globalThis.document = { readyState: 'loading', getElementById: () => null };
+globalThis.__harvestingDuneEmit = (s) => emitted.push(JSON.parse(s)); globalThis.fetch = async () => new Response('[]');
+eval(SCRIPT);
+__dd.primary = true;
+wv.addEventListener('message', (e) => { const m = e.data; if (m && m.topic) { page[m.topic] = m.payload; seen.push(m.topic); } });
+const drawn = [];
+const layer = { clearVectors() { drawn.length = 0; }, addPolyline: (pts, style) => drawn.push([pts.length, style.color]) };
+const translate = (x, y) => { if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error('bad point'); return { x, y }; };
+const map = { layers: { createStaticLayer: () => layer, addLayer() {} }, view: { translate } };
+map._createdLayers = [{ _items: new Map([[1, { data: { x: 5, y: 7 }, point: { x: 5, y: 7 } }]]) }];  // a page marker: calibration
+const STATES = STATES_JSON;
+EXTRA
+const runs = [];
+for (const state of STATES) {
+  __dd.set(state);
+  wv.dispatchEvent({ data: { type: 'delta', topic: 'dune.player', payload: { x: 0, y: 0, z: 0 } } });
+  const result = __dd.redrawAlternatives(true);
+  runs.push({ result, drawn: drawn.slice() });
+}
+console.log(JSON.stringify({ runs, posted, emitted, page, seen })); process.exit(0);
+"""
+
+
+def draw_runs(*states, extra=""):
+    """Each state through __dd.set + a dune.player delta + a forced redraw, in one page; `extra` is JS run first."""
+    code = DRAW.replace("SCRIPT", json.dumps(BRIDGE_SCRIPT)).replace("STATES_JSON", json.dumps(list(states)))
+    out = subprocess.run(["node", "-"], input=code.replace("EXTRA", extra), capture_output=True, text=True, timeout=30, check=False)
+    assert out.returncode == 0, out.stderr
+    return json.loads(out.stdout.splitlines()[0])
+
+
+def draw(state: dict) -> list[tuple[int, str]]:
+    """(points, colour) per polyline the bridge draws for one page_state."""
+    return [(n, c) for n, c in draw_runs(state)["runs"][0]["drawn"]]
+
+
+def pin(label, **kw):
+    return {"id": "t1:a", "kind": "pin", "x": 1000, "y": 0, "z": 0, "body": {"label": label}, "mine": False, **kw}
+
+
+FOREIGN, MINE = "rgba(255,255,255,0.7)", "rgba(255,255,255,0.9)"
+
+
+def test_pin_objects_draw_a_ring_an_own_mark_and_a_stroke_label():
+    blank, labelled = draw({"objects": [pin("")]}), draw({"objects": [pin("IRON HERE")]})
+    for drawn in (blank, labelled):
+        assert [p for p in drawn if p[0] == 33] == [(33, FOREIGN)] and {c for _, c in drawn} == {FOREIGN}
+    assert len(labelled) > len(blank) + 8
+    mine = draw({"objects": [pin("", mine=True)]})
+    assert mine == [(33, MINE), (33, MINE)]
+
+
+def test_pin_labels_are_strokes_from_the_glyph_whitelist_and_never_dispatched():
+    r = draw_runs({"objects": [pin("<b>x</b>")]}, {"objects": [pin("BX/B")]},
+                  {"objects": [pin("A" * 40)]}, {"objects": [pin("A" * 16)]}, {"objects": [pin("IRON HERE")]})
+    hostile, plain, long, cap, _ = (run["drawn"] for run in r["runs"])
+    # "<", ">" are not in the table and are dropped ("/" is a whitelisted mark), never substituted
+    assert len(hostile) == len(plain) and hostile == plain
+    assert len(long) == len(cap)
+    text = json.dumps({"posted": r["posted"], "emitted": r["emitted"], "page": r["page"]})
+    assert "IRON HERE" not in text and "<b>" not in text
+    assert set(r["seen"]) == {"dune.player"}  # no dune.map.actors / dune.trackedDestination dispatch for objects
+
+
+def test_unknown_kinds_and_bad_objects_are_skipped_one_at_a_time():
+    assert draw({"objects": [{**pin("BASE"), "kind": "base", "body": {"name": "BASE"}}]}) == []
+    bad_then_good = draw_runs({"objects": [{**pin("X"), "x": None}, pin("X")]},
+                              extra="STATES[0].objects[0].x = NaN;").get("runs")
+    assert [p for p in bad_then_good[0]["drawn"] if p[0] == 33] == [[33, FOREIGN]]
+    # a pin that throws while drawing is reported (once per redraw); the next pin still draws
+    throws = draw_runs({"objects": [pin("X"), pin("Y")]},
+                       extra="Object.defineProperty(STATES[0].objects[0].body, 'label', { get() { throw new Error('bad'); } });")
+    assert [p for p in throws["runs"][0]["drawn"] if p[0] == 33] == [[33, FOREIGN], [33, FOREIGN]]
+    assert {e["where"] for e in throws["emitted"] if e.get("type") == "log"} == {"objects"}
+    nobody = draw_runs({"objects": [{**pin(""), "body": None}]})
+    assert nobody["runs"][0]["drawn"] == [[33, FOREIGN]]
+    assert [e for e in nobody["emitted"] if e.get("type") == "log"] == []
+
+
+def test_objects_draw_with_no_alternatives_and_vanish_by_absence():
+    r = draw_runs({"alternatives": [], "objects": [pin("IRON")]}, {"objects": []})
+    shown, gone = r["runs"]
+    assert shown["result"] == "drawn" and [33, FOREIGN] in shown["drawn"]
+    assert gone["result"] == "empty" and gone["drawn"] == []
+
+
+def test_our_own_synthetic_destination_is_never_emitted_back():
+    emitted = run()["emitted"]
+    dests = [m["payload"] for m in emitted if m.get("topic") == "dune.trackedDestination"]
+    assert not any((p or {}).get("title") == "Iron" for p in dests)
+    assert any((p or {}).get("title") == "player pick" for p in dests)

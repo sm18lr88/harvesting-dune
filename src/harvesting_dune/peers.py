@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from . import settings
 from .catalog import NEVER_TARGET, ORE_MARKERS, marker_of
 from .gate import REFUSED
+from .objects import ObjectsMixin
 from .store import Status
 from .peerview import PeerViewMixin
 from .zones import is_deep_desert
@@ -46,9 +47,15 @@ class PeerStore:
     since: int = 0
     last_partition: dict | None = None  # where this identity last published: the heartbeat's place in menus
     farewell: dict | None = None  # {key, identity, partition}: the goodbye the sync loop sends next
+    objects: dict = field(default_factory=dict)  # (playerTag, id) -> received object (objects.py)
+    objects_out: list = field(default_factory=list)  # staged uploads, dropped only after a successful exchange
+    objects_seen: bool = False  # a response of this process carried `objects`: the server knows them
+    objects_note: str | None = None  # why the last publish was refused, for the settings page
+    my_tag: str | None = None  # our playerTag, learned from the first echoed own object
+    published_at: float = 0.0  # wall clock of the last staged publish
 
 
-class PeerMixin(PeerViewMixin):
+class PeerMixin(PeerViewMixin, ObjectsMixin):
     def set_sync_key(self, key: str) -> bool:
         """Use a new guild key ("" forgets it) and save it. False, changing nothing, for a key of
         the wrong format."""
@@ -58,6 +65,7 @@ class PeerMixin(PeerViewMixin):
             self.queue_farewell()  # the old key's characters leave the guild's view now
         if key != self.sync_key:
             self.key_checked_at, self.key_error = None, None  # gate.py: a new key needs its own check
+            self.objects_reset()
         self.sync_key = key or None
         self.peers.key_state = "unknown" if key else "none"
         self.peers.connected_as = None
@@ -84,6 +92,7 @@ class PeerMixin(PeerViewMixin):
         p = self.peers
         p.outbox.clear()
         p.connected_as, p.since, p.last_partition = None, 0, None
+        self.objects_reset()
 
     # -- publishing --------------------------------------------------------------------------
     def peer_note(self, cls: str, marker: str, x: float, y: float, z: float, now: float,
@@ -216,5 +225,6 @@ class PeerMixin(PeerViewMixin):
             "members": self.peer_members(),
             "hiddenMembers": sorted(self.sync_hidden_members),  # guildmates you chose not to draw
             "sightings": self.peer_sightings(),
+            "objects": self.objects_snapshot(),
             "server": SERVER,
         }

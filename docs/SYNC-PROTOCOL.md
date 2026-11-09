@@ -112,6 +112,7 @@ The key is secret. It never appears in a log line, a page, a snapshot, a bridge 
 | `position` | The player position, or `null`. Position sharing is on by default. A player can turn it off on the settings page. Then the client sends `null`. |
 | `records` | Up to 200 sightings. See below. |
 | `presence` | Optional. The heartbeat: see "Presence". A body without it comes from an older client; the server reads it as `{"nextS": 60, "inGame": true, "leaving": false}`. |
+| `objects` | Optional. Up to 20 shared objects to create, replace or delete. See "Objects". |
 
 All coordinates are world centimetres. All times are unix seconds.
 
@@ -173,7 +174,7 @@ The server has one global counter, `rev`. Each upsert adds 1 to it and stamps th
 
 The server handles the upload first, then reads. So the caller's own new rows come back in the same response.
 
-One response holds at most 500 sightings, lowest rev first. When the server cuts the list, `next` is the rev of the last sighting it sent. The client then polls again at once, until a response is not cut.
+One response holds at most 500 sightings, lowest rev first. When the server cuts the list, `next` is the rev of the last sighting it sent, or lower when the objects list was cut too (see "Objects"). The client then polls again at once, until a response is not cut.
 
 ## Response
 
@@ -182,10 +183,11 @@ A good request returns 200 and this object:
 | Key | Content |
 |---|---|
 | `now` | The server clock, unix seconds. |
-| `next` | The highest rev so far, or the rev of the last sighting when the list was cut at 500. Send it as `since` next time. |
+| `next` | The highest rev so far. When a list was cut (500 sightings or 200 objects), it is the lower of the cut ends instead. Send it as `since` next time. |
 | `keyState` | `"valid"`. |
 | `presence` | The other members of the same battlegroup that are not gone (see "Presence"), in any world. Never the caller. Each entry: `characterName`, `characterId`, `battlegroupId`, `worldId`, `layout`, `x`, `y`, `z`, `ageS`, `keyId`, `state`, `lastNextS`. `x`, `y` and `z` are `null` when that member turned position sharing off. |
 | `sightings` | Rows with `rev > since` in the caller's partition only (same `battlegroupId` and same `layout`). Each entry: `cls`, `type`, `x`, `y`, `z`, `fill`, `size`, `rowKey`, `distCm`, `ageS`, `observerName`, `observerKey`, `observers` (key ids), `rev`, `worldId`, `layout`. The caller's own rows are included. |
+| `objects` | Shared objects with `rev > since` in the caller's battlegroup, in any world. See "Objects". The caller's own objects are included. |
 
 ### Age
 
@@ -218,6 +220,90 @@ The server works out each member's state from its own clock only. Client clocks 
 
 The client says goodbye (`leaving: true`) when the detector stops (it waits at most 3 seconds and never holds the exit), when sync is paused, when position sharing is turned off (a normal sync follows at once, without a position), when the key is removed or changed, and when the character ends (see "Client"). A lost goodbye does no harm: the deadline rule covers it.
 
+## Objects
+
+A member can share small objects with the guild. The first kind is the pin: a ring with a short label on every guildmate's minimap. Objects travel inside `/v1/sync`. There is no extra route and no extra request.
+
+The envelope is strict. The body is open: the server stores any small plain JSON value and never reads it. So a new kind of object needs no server change.
+
+### Envelope
+
+The request field `objects` is a list of at most 20 uploads. Each upload has exactly these six keys. Any other key gets 400.
+
+| Key | Rule |
+|---|---|
+| `id` | 1-64 characters from `A-Z a-z 0-9 _ -`. The author picks it. It is unique per key, so two keys may use the same id. The same id again replaces the object. |
+| `kind` | 1-64 characters from `a-z 0-9 _`, for example `pin`. The server keeps no list of kinds. |
+| `scope` | `null` (the whole battlegroup) or `{"worldId": ..., "layout": ...}`, with the same rules as `partition`. |
+| `geometry` | `null` (no position) or `{"type": "point", "x": ..., "y": ..., "z": ...}` in world centimetres. Numbers must be finite. `point` is the only type today. |
+| `body` | Any plain JSON value, with the same rules as a profile value. As canonical JSON (sorted keys, no spaces) it is at most 512 bytes. A pin's body is `{"label": "IRON HERE"}`. |
+| `ttlS` | An integer, 0 or more: seconds to live from when the server receives it. More than 86400 (24 hours) is cut to 86400. 0 deletes the object. |
+
+The client never sends a clock time for an object. So client clocks never matter here.
+
+### What the server adds
+
+Each object in the reply has the six keys, with `ttlS` as seconds left, plus these:
+
+| Key | Content |
+|---|---|
+| `characterId`, `characterName` | The character of the request that wrote it. |
+| `playerTag` | The author's opaque tag, as in "Who may do what". The reader names an object by `playerTag` and `id`. |
+| `rev` | A value of the shared rev counter (see "Cursor"). |
+| `ageS` | Seconds since the server received it. |
+| `ttlS` | Seconds left on the server clock. 0 or less means the object was deleted or has ended: drop it. |
+
+The key id never goes on the wire. The server keeps it to know who owns each row.
+
+### Lifetime and delete
+
+- An object ends when its `ttlS` runs out. The client gives a pin 2 hours.
+- `ttlS: 0` deletes an object. The row stays as a tombstone that ends now. It gets a new rev, so every reader learns it on its next sync.
+- When the admin revokes a key, or a key expires after 30 idle days, all its live objects end at once. Each gets a new rev.
+- The server deletes a row 24 hours after it ended.
+- A key keeps at most 100 rows, live and ended. Beyond that, the server deletes the key's oldest ended rows. It never deletes a live row this way.
+
+### Caps
+
+| Cap | Value |
+|---|---|
+| Uploads in one request | 20 |
+| Live objects per key | 20 |
+| Live objects per battlegroup | 300 |
+| Body | 512 bytes as canonical JSON |
+| Lifetime | 24 hours (`ttlS` is cut to 86400) |
+
+The server counts live objects inside the same transaction as the write. A new live object over a cap gets 400 with type `#object-cap`. Its `field` names the upload, for example `objects[0]`. Nothing of that request is written: no object, no presence, no sighting.
+
+Replacing one of your live objects, or deleting one, always passes.
+
+The client checks the caps itself before it stages an object. When the server refuses an upload anyway, the client drops its staged objects and shows why on the settings page. Then it syncs again at once without them.
+
+### Cursor
+
+Objects share the rev counter and the `since`/`next` cursor with sightings. One reply holds at most 200 objects, lowest rev first.
+
+When the server cuts the objects list at 200, `next` is the lower of the two cut ends. So the next request misses nothing from either list. Then the client syncs again at once.
+
+A row may come twice after a cut. The reader keys objects by `playerTag` and `id`, so a repeat changes nothing.
+
+Objects are not filtered by world. A reply holds every object of the battlegroup, so a pin dropped in another map is already there when you arrive.
+
+### Old clients and old servers
+
+- An older detector does not know the `objects` reply key. It ignores it, like any key it does not know.
+- An older server refuses `objects` in a body with 400, and then the whole sync fails. So the client sends `objects` only after a reply from this server carried the `objects` key.
+- So the server is deployed first, then the detectors.
+
+### Drawing
+
+- The client draws an object only when its `scope` is `null` or equals the player's world and layout.
+- It draws only `point` objects of kinds it knows. Today that is `pin`. It keeps other kinds and lists them, but does not draw them.
+- Objects of a guildmate you hid on the roster are not drawn.
+- Your own pins carry a second, smaller ring.
+- A label is drawn as strokes from a fixed set of letters, digits and marks. Other characters are left out.
+- Objects never change the ranking, the destination or the routes.
+
 ## Errors
 
 Every answer with a status of 400 or more is a problem details object (RFC 9457), with `Content-Type: application/problem+json`:
@@ -229,7 +315,7 @@ Every answer with a status of 400 or more is a problem details object (RFC 9457)
 ```
 
 - `status` is always the real status code.
-- `type` is what a program checks. It is one of the five types below, or `about:blank`. With `about:blank`, the status code says everything, and `title` is the status name (for example `Not Found`).
+- `type` is what a program checks. It is one of the types below, or `about:blank`. With `about:blank`, the status code says everything, and `title` is the status name (for example `Not Found`).
 - `error` is the v1 text from before problem details. It stays, so an older reader keeps working.
 - `detail` is for people. Programs must not parse it.
 - No answer holds a stack trace, a file path, SQL or a host name. A 500 holds only `requestId`. The server log has the same id next to the full error.
@@ -237,6 +323,7 @@ Every answer with a status of 400 or more is a problem details object (RFC 9457)
 | Status | `type` | When | Extra members |
 |---|---|---|---|
 | 400 | `#invalid-field` | The body is not JSON, nests too deep, its gzip does not inflate, or a field has the wrong shape or value. Also a bad `limit` or `after` on `GET /v1/data`. | `field`: the first bad field, for example `records[0].cls`, or `body` |
+| 400 | `#object-cap` | A new live object would pass a cap (see "Objects"). Nothing is written. | `field`: the upload, for example `objects[0]` |
 | 401 | `#invalid-key` | The key is unknown, revoked or missing. | Header `WWW-Authenticate` |
 | 401 | `#key-expired` | A regular key was not used for more than 30 days (see "Key expiry"). | Header `WWW-Authenticate` |
 | 403 | `#character-owned` | The character in `identity` belongs to another key (see "Who may do what"). Nothing is written. | |
@@ -261,6 +348,10 @@ The request body breaks a rule in "Field rules" or "Characters". `field` names t
 
 Another key owns this character. Ask the admin which key it is. Revoking that key frees the character.
 
+#### object-cap
+
+The key already has 20 live objects, or the battlegroup has 300. `detail` says which. Delete an object first, or wait until one ends. Sending the same body again gets the same answer.
+
 #### rate-limited
 
 Wait `Retry-After` seconds, then send again.
@@ -284,6 +375,7 @@ The server and the detector ship together, but guildmates update their detectors
 - `/v1` never breaks. These count as breaking, and need a new path (`/v2`): a new required request field, a tighter rule on an existing field (shorter text, fewer classes, a smaller limit), a removed or renamed response key or header, a changed meaning or type of a field, a changed or reused problem `type`, a changed status code for an existing case, a different 403/404 rule, a new authentication rule, or much lower rate limits.
 - These are additive and ship in `/v1`: a new response key (clients ignore keys they do not know), a new optional route, a new record class in a response (clients skip classes they do not know), and a looser limit.
 - A new request field, even an optional one, is refused by an older server (unknown fields get 400). So the server ships first. A client sends the new field only after every server it talks to accepts it.
+- `objects` is such an optional field. The client sends it only after a reply from the server carried the `objects` key (see "Objects").
 - Before a route or a field goes away, every answer of the old route carries these headers, from the day it is announced:
 
   ```
@@ -306,6 +398,7 @@ The server removes old data. A sweep runs every 60 seconds.
 | `ship`, `mined` and `stale` sightings | 24 hours |
 | character profiles | 30 days after the last upload, and longer while that character keeps syncing. A player who turns "Share my character" off deletes it. |
 | audit log | 30 days |
+| objects | 24 hours after they end (lifetime over, deleted, or the author's key revoked or expired). At most 100 rows per key. |
 
 Rate limits:
 
@@ -460,6 +553,8 @@ Measured on 2026-11-08 over the real TLS test server (`tests/certs`), with three
 Syncs per hour: 240 moving, 60 standing in a world, 20 in menus, 0 without a key (`tests/test_sync_efficiency.py`). Before this, the client synced every 20 seconds in every state: 180 per hour.
 
 Ore refresh: 200 live ore nodes sent again every 20 minutes cost about 25 KB per hour up for the player who sees them, and about 29 KB per hour down for each guildmate in that map (gzip on).
+
+Objects: a restart fetches every object of the battlegroup once. That is at most 300 live objects plus at most 100 rows per key, 200 per reply.
 
 Server CPU per sync (the handler: parse, writes, read, reply JSON and gzip; `time.process_time` over 1,000 syncs): 0.14 ms with nothing new, 0.28 ms for a typical sync, 3.5 ms with 200 records.
 

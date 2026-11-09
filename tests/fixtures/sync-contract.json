@@ -14,7 +14,9 @@
     "expectedSightings": "When present, check the sightings list by count and first/last rev instead of exact values; expectedResponse then omits sightings.",
     "expectedHeaders": "Each listed response header is present. Retry-After holds whole seconds (1-60).",
     "problemDetails": "Every response with a status of 400 or more is Content-Type application/problem+json (RFC 9457): type, title, status (the real status code), error (the v1 text), and detail or extension members such as field.",
-    "keys": "Seed every key with created_at = createdAt, role = role, revoked_at = 1.0 when revoked, last_seen null. The storage clock is frozen at case.serverNow too, so key expiry (30 days without use) is judged at that time."
+    "keys": "Seed every key with created_at = createdAt, role = role, revoked_at = 1.0 when revoked, last_seen null. The storage clock is frozen at case.serverNow too, so key expiry (30 days without use) is judged at that time.",
+    "fillerObjects": "Generate count objects rows from template, varied as the vary text says, before the request.",
+    "objects": "given.rows.objects (optional) are stored objects rows: body and geometry are stored as JSON text, scope as worldId and layout columns. expectedRows.objects compares them under the same logical names."
   },
   "keys": [
     {
@@ -129,7 +131,8 @@
         "next",
         "keyState",
         "presence",
-        "sightings"
+        "sightings",
+        "objects"
       ],
       "expectedResponse": {
         "now": 1794160000.0,
@@ -157,7 +160,8 @@
             "layout": "deepdesert_1_07",
             "ageS": 30.0
           }
-        ]
+        ],
+        "objects": []
       },
       "expectedRows": {
         "sightings": [
@@ -264,7 +268,8 @@
         "next",
         "keyState",
         "presence",
-        "sightings"
+        "sightings",
+        "objects"
       ],
       "expectedResponse": {
         "now": 1794160000.0,
@@ -292,7 +297,8 @@
             "layout": "deepdesert_1_07",
             "ageS": 30.0
           }
-        ]
+        ],
+        "objects": []
       },
       "expectedRows": {
         "sightings": [
@@ -464,7 +470,8 @@
         "next",
         "keyState",
         "presence",
-        "sightings"
+        "sightings",
+        "objects"
       ],
       "expectedResponse": {
         "now": 1794160020.0,
@@ -507,7 +514,8 @@
             "layout": "deepdesert_1_07",
             "ageS": 14.0
           }
-        ]
+        ],
+        "objects": []
       },
       "expectedRows": {
         "sightings": [
@@ -717,14 +725,16 @@
         "next",
         "keyState",
         "presence",
-        "sightings"
+        "sightings",
+        "objects"
       ],
       "expectedResponse": {
         "now": 1794160025.0,
         "next": 2,
         "keyState": "valid",
         "presence": [],
-        "sightings": []
+        "sightings": [],
+        "objects": []
       },
       "expectedRows": {
         "sightings": [
@@ -942,7 +952,8 @@
         "next",
         "keyState",
         "presence",
-        "sightings"
+        "sightings",
+        "objects"
       ],
       "expectedResponse": {
         "now": 1794160030.0,
@@ -964,7 +975,8 @@
             "lastNextS": 60.0
           }
         ],
-        "sightings": []
+        "sightings": [],
+        "objects": []
       },
       "expectedRows": {
         "sightings": [
@@ -1130,7 +1142,8 @@
         "next",
         "keyState",
         "presence",
-        "sightings"
+        "sightings",
+        "objects"
       ],
       "expectedResponse": {
         "now": 1794160040.0,
@@ -1159,7 +1172,8 @@
             "layout": "deepdesert_1_07",
             "ageS": 4.0
           }
-        ]
+        ],
+        "objects": []
       },
       "expectedRows": {
         "sightings": [
@@ -1267,7 +1281,8 @@
         "next",
         "keyState",
         "presence",
-        "sightings"
+        "sightings",
+        "objects"
       ],
       "expectedResponse": {
         "now": 1794160040.0,
@@ -1295,7 +1310,8 @@
             "layout": "deepdesert_1_07",
             "ageS": 4.0
           }
-        ]
+        ],
+        "objects": []
       },
       "expectedRows": {
         "sightings": [
@@ -4482,13 +4498,15 @@
         "next",
         "keyState",
         "presence",
-        "sightings"
+        "sightings",
+        "objects"
       ],
       "expectedResponse": {
         "now": 1794160010.0,
         "next": 500,
         "keyState": "valid",
-        "presence": []
+        "presence": [],
+        "objects": []
       },
       "expectedSightings": {
         "count": 500,
@@ -4593,7 +4611,8 @@
         "next",
         "keyState",
         "presence",
-        "sightings"
+        "sightings",
+        "objects"
       ],
       "expectedResponse": {
         "now": 1794160100.0,
@@ -4629,7 +4648,8 @@
             "lastNextS": 180.0
           }
         ],
-        "sightings": []
+        "sightings": [],
+        "objects": []
       },
       "expectedRows": {
         "presence": [
@@ -5444,6 +5464,1272 @@
       },
       "expectedRows": {
         "profiles": []
+      }
+    },
+    {
+      "name": "object-publish",
+      "description": "One pin with a point, a scope and a two-word label: the server stores it with the next rev and echoes it with ttlS, ageS 0 and the author's playerTag (never the key id).",
+      "serverNow": 1794160000.0,
+      "given": {
+        "rev": 10,
+        "rows": {
+          "sightings": [],
+          "presence": [],
+          "objects": []
+        },
+        "priorRequests": 0
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1/sync",
+        "headers": {
+          "Authorization": "Bearer gs1_alpha001_Qm9vdHN0cmFwVGVzdEtleUFscGhhMDAx",
+          "Content-Type": "application/json",
+          "X-Client-Version": "0.9.0"
+        },
+        "body": {
+          "since": 0,
+          "sentAt": 1794160000.0,
+          "identity": {
+            "characterName": "Alpha Test",
+            "characterId": 1001,
+            "battlegroupId": "prd-srv-test-alpha-erg"
+          },
+          "partition": {
+            "worldId": "survival_1",
+            "layout": "survival_1"
+          },
+          "position": null,
+          "records": [],
+          "objects": [
+            {
+              "id": "p1",
+              "kind": "pin",
+              "scope": {
+                "worldId": "survival_1",
+                "layout": "survival_1"
+              },
+              "geometry": {
+                "type": "point",
+                "x": 120000.0,
+                "y": -65000.0,
+                "z": 1400.0
+              },
+              "body": {
+                "label": "IRON HERE"
+              },
+              "ttlS": 7200
+            }
+          ]
+        }
+      },
+      "expectedStatus": 200,
+      "expectedResponseKeys": [
+        "now",
+        "next",
+        "keyState",
+        "presence",
+        "sightings",
+        "objects"
+      ],
+      "expectedResponse": {
+        "now": 1794160000.0,
+        "next": 11,
+        "keyState": "valid",
+        "presence": [],
+        "sightings": [],
+        "objects": [
+          {
+            "id": "p1",
+            "kind": "pin",
+            "scope": {
+              "worldId": "survival_1",
+              "layout": "survival_1"
+            },
+            "geometry": {
+              "type": "point",
+              "x": 120000.0,
+              "y": -65000.0,
+              "z": 1400.0
+            },
+            "body": {
+              "label": "IRON HERE"
+            },
+            "ttlS": 7200.0,
+            "ageS": 0.0,
+            "characterId": 1001,
+            "characterName": "Alpha Test",
+            "playerTag": "53b6ae84",
+            "rev": 11
+          }
+        ]
+      },
+      "expectedRows": {
+        "objects": [
+          {
+            "keyId": "alpha001",
+            "id": "p1",
+            "battlegroupId": "prd-srv-test-alpha-erg",
+            "characterId": 1001,
+            "characterName": "Alpha Test",
+            "kind": "pin",
+            "worldId": "survival_1",
+            "layout": "survival_1",
+            "geometry": {
+              "type": "point",
+              "x": 120000.0,
+              "y": -65000.0,
+              "z": 1400.0
+            },
+            "body": {
+              "label": "IRON HERE"
+            },
+            "expiresAt": 1794167200.0,
+            "receivedAt": 1794160000.0,
+            "rev": 11
+          }
+        ]
+      }
+    },
+    {
+      "name": "object-delete",
+      "description": "ttlS 0 deletes: the row stays as a tombstone that ends now, with a new rev, so every reader learns it on its next sync (echoed ttlS 0: drop it).",
+      "serverNow": 1794160000.0,
+      "given": {
+        "rev": 5,
+        "rows": {
+          "sightings": [],
+          "presence": [],
+          "objects": [
+            {
+              "keyId": "alpha001",
+              "id": "p1",
+              "battlegroupId": "prd-srv-test-alpha-erg",
+              "characterId": 1001,
+              "characterName": "Alpha Test",
+              "kind": "pin",
+              "worldId": "survival_1",
+              "layout": "survival_1",
+              "geometry": {
+                "type": "point",
+                "x": 120000.0,
+                "y": -65000.0,
+                "z": 1400.0
+              },
+              "body": {
+                "label": "IRON HERE"
+              },
+              "expiresAt": 1794163600.0,
+              "receivedAt": 1794159400.0,
+              "rev": 5
+            }
+          ]
+        },
+        "priorRequests": 0
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1/sync",
+        "headers": {
+          "Authorization": "Bearer gs1_alpha001_Qm9vdHN0cmFwVGVzdEtleUFscGhhMDAx",
+          "Content-Type": "application/json",
+          "X-Client-Version": "0.9.0"
+        },
+        "body": {
+          "since": 0,
+          "sentAt": 1794160000.0,
+          "identity": {
+            "characterName": "Alpha Test",
+            "characterId": 1001,
+            "battlegroupId": "prd-srv-test-alpha-erg"
+          },
+          "partition": {
+            "worldId": "survival_1",
+            "layout": "survival_1"
+          },
+          "position": null,
+          "records": [],
+          "objects": [
+            {
+              "id": "p1",
+              "kind": "pin",
+              "scope": {
+                "worldId": "survival_1",
+                "layout": "survival_1"
+              },
+              "geometry": {
+                "type": "point",
+                "x": 120000.0,
+                "y": -65000.0,
+                "z": 1400.0
+              },
+              "body": {
+                "label": "IRON HERE"
+              },
+              "ttlS": 0
+            }
+          ]
+        }
+      },
+      "expectedStatus": 200,
+      "expectedResponseKeys": [
+        "now",
+        "next",
+        "keyState",
+        "presence",
+        "sightings",
+        "objects"
+      ],
+      "expectedResponse": {
+        "now": 1794160000.0,
+        "next": 6,
+        "keyState": "valid",
+        "presence": [],
+        "sightings": [],
+        "objects": [
+          {
+            "id": "p1",
+            "kind": "pin",
+            "scope": {
+              "worldId": "survival_1",
+              "layout": "survival_1"
+            },
+            "geometry": {
+              "type": "point",
+              "x": 120000.0,
+              "y": -65000.0,
+              "z": 1400.0
+            },
+            "body": {
+              "label": "IRON HERE"
+            },
+            "ttlS": 0.0,
+            "ageS": 0.0,
+            "characterId": 1001,
+            "characterName": "Alpha Test",
+            "playerTag": "53b6ae84",
+            "rev": 6
+          }
+        ]
+      },
+      "expectedRows": {
+        "objects": [
+          {
+            "keyId": "alpha001",
+            "id": "p1",
+            "battlegroupId": "prd-srv-test-alpha-erg",
+            "characterId": 1001,
+            "characterName": "Alpha Test",
+            "kind": "pin",
+            "worldId": "survival_1",
+            "layout": "survival_1",
+            "geometry": {
+              "type": "point",
+              "x": 120000.0,
+              "y": -65000.0,
+              "z": 1400.0
+            },
+            "body": {
+              "label": "IRON HERE"
+            },
+            "expiresAt": 1794160000.0,
+            "receivedAt": 1794160000.0,
+            "rev": 6
+          }
+        ]
+      }
+    },
+    {
+      "name": "object-note-positionless",
+      "description": "A kind the server has never heard of, with no scope and no geometry: stored and echoed like any object (the server keeps no kind list).",
+      "serverNow": 1794160000.0,
+      "given": {
+        "rev": 0,
+        "rows": {
+          "sightings": [],
+          "presence": [],
+          "objects": []
+        },
+        "priorRequests": 0
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1/sync",
+        "headers": {
+          "Authorization": "Bearer gs1_alpha001_Qm9vdHN0cmFwVGVzdEtleUFscGhhMDAx",
+          "Content-Type": "application/json",
+          "X-Client-Version": "0.9.0"
+        },
+        "body": {
+          "since": 0,
+          "sentAt": 1794160000.0,
+          "identity": {
+            "characterName": "Alpha Test",
+            "characterId": 1001,
+            "battlegroupId": "prd-srv-test-alpha-erg"
+          },
+          "partition": {
+            "worldId": "survival_1",
+            "layout": "survival_1"
+          },
+          "position": null,
+          "records": [],
+          "objects": [
+            {
+              "id": "n1",
+              "kind": "note",
+              "scope": null,
+              "geometry": null,
+              "body": {
+                "text": "meet at the blow"
+              },
+              "ttlS": 3600
+            }
+          ]
+        }
+      },
+      "expectedStatus": 200,
+      "expectedResponseKeys": [
+        "now",
+        "next",
+        "keyState",
+        "presence",
+        "sightings",
+        "objects"
+      ],
+      "expectedResponse": {
+        "now": 1794160000.0,
+        "next": 1,
+        "keyState": "valid",
+        "presence": [],
+        "sightings": [],
+        "objects": [
+          {
+            "id": "n1",
+            "kind": "note",
+            "scope": null,
+            "geometry": null,
+            "body": {
+              "text": "meet at the blow"
+            },
+            "ttlS": 3600.0,
+            "ageS": 0.0,
+            "characterId": 1001,
+            "characterName": "Alpha Test",
+            "playerTag": "53b6ae84",
+            "rev": 1
+          }
+        ]
+      },
+      "expectedRows": {
+        "objects": [
+          {
+            "keyId": "alpha001",
+            "id": "n1",
+            "battlegroupId": "prd-srv-test-alpha-erg",
+            "characterId": 1001,
+            "characterName": "Alpha Test",
+            "kind": "note",
+            "worldId": null,
+            "layout": null,
+            "geometry": null,
+            "body": {
+              "text": "meet at the blow"
+            },
+            "expiresAt": 1794163600.0,
+            "receivedAt": 1794160000.0,
+            "rev": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "object-base-kind",
+      "description": "Another kind with a point: no server change is needed for a new kind.",
+      "serverNow": 1794160000.0,
+      "given": {
+        "rev": 0,
+        "rows": {
+          "sightings": [],
+          "presence": [],
+          "objects": []
+        },
+        "priorRequests": 0
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1/sync",
+        "headers": {
+          "Authorization": "Bearer gs1_alpha001_Qm9vdHN0cmFwVGVzdEtleUFscGhhMDAx",
+          "Content-Type": "application/json",
+          "X-Client-Version": "0.9.0"
+        },
+        "body": {
+          "since": 0,
+          "sentAt": 1794160000.0,
+          "identity": {
+            "characterName": "Alpha Test",
+            "characterId": 1001,
+            "battlegroupId": "prd-srv-test-alpha-erg"
+          },
+          "partition": {
+            "worldId": "survival_1",
+            "layout": "survival_1"
+          },
+          "position": null,
+          "records": [],
+          "objects": [
+            {
+              "id": "b1",
+              "kind": "base",
+              "scope": {
+                "worldId": "survival_1",
+                "layout": "survival_1"
+              },
+              "geometry": {
+                "type": "point",
+                "x": 120000.0,
+                "y": -65000.0,
+                "z": 1400.0
+              },
+              "body": {
+                "name": "Sietch Test"
+              },
+              "ttlS": 86400
+            }
+          ]
+        }
+      },
+      "expectedStatus": 200,
+      "expectedResponseKeys": [
+        "now",
+        "next",
+        "keyState",
+        "presence",
+        "sightings",
+        "objects"
+      ],
+      "expectedResponse": {
+        "now": 1794160000.0,
+        "next": 1,
+        "keyState": "valid",
+        "presence": [],
+        "sightings": [],
+        "objects": [
+          {
+            "id": "b1",
+            "kind": "base",
+            "scope": {
+              "worldId": "survival_1",
+              "layout": "survival_1"
+            },
+            "geometry": {
+              "type": "point",
+              "x": 120000.0,
+              "y": -65000.0,
+              "z": 1400.0
+            },
+            "body": {
+              "name": "Sietch Test"
+            },
+            "ttlS": 86400.0,
+            "ageS": 0.0,
+            "characterId": 1001,
+            "characterName": "Alpha Test",
+            "playerTag": "53b6ae84",
+            "rev": 1
+          }
+        ]
+      },
+      "expectedRows": {
+        "objects": [
+          {
+            "keyId": "alpha001",
+            "id": "b1",
+            "battlegroupId": "prd-srv-test-alpha-erg",
+            "characterId": 1001,
+            "characterName": "Alpha Test",
+            "kind": "base",
+            "worldId": "survival_1",
+            "layout": "survival_1",
+            "geometry": {
+              "type": "point",
+              "x": 120000.0,
+              "y": -65000.0,
+              "z": 1400.0
+            },
+            "body": {
+              "name": "Sietch Test"
+            },
+            "expiresAt": 1794246400.0,
+            "receivedAt": 1794160000.0,
+            "rev": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "object-same-id-two-keys",
+      "description": "Ids are unique per key: bravo002 already has p1, alpha001 stores its own p1. Both rows stay; the reply lists both, lowest rev first, told apart by playerTag.",
+      "serverNow": 1794160000.0,
+      "given": {
+        "rev": 3,
+        "rows": {
+          "sightings": [],
+          "presence": [],
+          "objects": [
+            {
+              "keyId": "bravo002",
+              "id": "p1",
+              "battlegroupId": "prd-srv-test-alpha-erg",
+              "characterId": 1002,
+              "characterName": "Beta Test",
+              "kind": "pin",
+              "worldId": "survival_1",
+              "layout": "survival_1",
+              "geometry": {
+                "type": "point",
+                "x": 120000.0,
+                "y": -65000.0,
+                "z": 1400.0
+              },
+              "body": {
+                "label": "IRON HERE"
+              },
+              "expiresAt": 1794163600.0,
+              "receivedAt": 1794159400.0,
+              "rev": 3
+            }
+          ]
+        },
+        "priorRequests": 0
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1/sync",
+        "headers": {
+          "Authorization": "Bearer gs1_alpha001_Qm9vdHN0cmFwVGVzdEtleUFscGhhMDAx",
+          "Content-Type": "application/json",
+          "X-Client-Version": "0.9.0"
+        },
+        "body": {
+          "since": 0,
+          "sentAt": 1794160000.0,
+          "identity": {
+            "characterName": "Alpha Test",
+            "characterId": 1001,
+            "battlegroupId": "prd-srv-test-alpha-erg"
+          },
+          "partition": {
+            "worldId": "survival_1",
+            "layout": "survival_1"
+          },
+          "position": null,
+          "records": [],
+          "objects": [
+            {
+              "id": "p1",
+              "kind": "pin",
+              "scope": {
+                "worldId": "survival_1",
+                "layout": "survival_1"
+              },
+              "geometry": {
+                "type": "point",
+                "x": 120000.0,
+                "y": -65000.0,
+                "z": 1400.0
+              },
+              "body": {
+                "label": "IRON HERE"
+              },
+              "ttlS": 7200
+            }
+          ]
+        }
+      },
+      "expectedStatus": 200,
+      "expectedResponseKeys": [
+        "now",
+        "next",
+        "keyState",
+        "presence",
+        "sightings",
+        "objects"
+      ],
+      "expectedResponse": {
+        "now": 1794160000.0,
+        "next": 4,
+        "keyState": "valid",
+        "presence": [],
+        "sightings": [],
+        "objects": [
+          {
+            "id": "p1",
+            "kind": "pin",
+            "scope": {
+              "worldId": "survival_1",
+              "layout": "survival_1"
+            },
+            "geometry": {
+              "type": "point",
+              "x": 120000.0,
+              "y": -65000.0,
+              "z": 1400.0
+            },
+            "body": {
+              "label": "IRON HERE"
+            },
+            "ttlS": 3600.0,
+            "ageS": 600.0,
+            "characterId": 1002,
+            "characterName": "Beta Test",
+            "playerTag": "6292d5d9",
+            "rev": 3
+          },
+          {
+            "id": "p1",
+            "kind": "pin",
+            "scope": {
+              "worldId": "survival_1",
+              "layout": "survival_1"
+            },
+            "geometry": {
+              "type": "point",
+              "x": 120000.0,
+              "y": -65000.0,
+              "z": 1400.0
+            },
+            "body": {
+              "label": "IRON HERE"
+            },
+            "ttlS": 7200.0,
+            "ageS": 0.0,
+            "characterId": 1001,
+            "characterName": "Alpha Test",
+            "playerTag": "53b6ae84",
+            "rev": 4
+          }
+        ]
+      },
+      "expectedRows": {
+        "objects": [
+          {
+            "keyId": "bravo002",
+            "id": "p1",
+            "battlegroupId": "prd-srv-test-alpha-erg",
+            "characterId": 1002,
+            "characterName": "Beta Test",
+            "kind": "pin",
+            "worldId": "survival_1",
+            "layout": "survival_1",
+            "geometry": {
+              "type": "point",
+              "x": 120000.0,
+              "y": -65000.0,
+              "z": 1400.0
+            },
+            "body": {
+              "label": "IRON HERE"
+            },
+            "expiresAt": 1794163600.0,
+            "receivedAt": 1794159400.0,
+            "rev": 3
+          },
+          {
+            "keyId": "alpha001",
+            "id": "p1",
+            "battlegroupId": "prd-srv-test-alpha-erg",
+            "characterId": 1001,
+            "characterName": "Alpha Test",
+            "kind": "pin",
+            "worldId": "survival_1",
+            "layout": "survival_1",
+            "geometry": {
+              "type": "point",
+              "x": 120000.0,
+              "y": -65000.0,
+              "z": 1400.0
+            },
+            "body": {
+              "label": "IRON HERE"
+            },
+            "expiresAt": 1794167200.0,
+            "receivedAt": 1794160000.0,
+            "rev": 4
+          }
+        ]
+      }
+    },
+    {
+      "name": "object-ttl-clamped",
+      "description": "A ttlS over 24 hours is clamped to 86400, not refused.",
+      "serverNow": 1794160000.0,
+      "given": {
+        "rev": 0,
+        "rows": {
+          "sightings": [],
+          "presence": [],
+          "objects": []
+        },
+        "priorRequests": 0
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1/sync",
+        "headers": {
+          "Authorization": "Bearer gs1_alpha001_Qm9vdHN0cmFwVGVzdEtleUFscGhhMDAx",
+          "Content-Type": "application/json",
+          "X-Client-Version": "0.9.0"
+        },
+        "body": {
+          "since": 0,
+          "sentAt": 1794160000.0,
+          "identity": {
+            "characterName": "Alpha Test",
+            "characterId": 1001,
+            "battlegroupId": "prd-srv-test-alpha-erg"
+          },
+          "partition": {
+            "worldId": "survival_1",
+            "layout": "survival_1"
+          },
+          "position": null,
+          "records": [],
+          "objects": [
+            {
+              "id": "p1",
+              "kind": "pin",
+              "scope": {
+                "worldId": "survival_1",
+                "layout": "survival_1"
+              },
+              "geometry": {
+                "type": "point",
+                "x": 120000.0,
+                "y": -65000.0,
+                "z": 1400.0
+              },
+              "body": {
+                "label": "IRON HERE"
+              },
+              "ttlS": 1000000
+            }
+          ]
+        }
+      },
+      "expectedStatus": 200,
+      "expectedResponseKeys": [
+        "now",
+        "next",
+        "keyState",
+        "presence",
+        "sightings",
+        "objects"
+      ],
+      "expectedResponse": {
+        "now": 1794160000.0,
+        "next": 1,
+        "keyState": "valid",
+        "presence": [],
+        "sightings": [],
+        "objects": [
+          {
+            "id": "p1",
+            "kind": "pin",
+            "scope": {
+              "worldId": "survival_1",
+              "layout": "survival_1"
+            },
+            "geometry": {
+              "type": "point",
+              "x": 120000.0,
+              "y": -65000.0,
+              "z": 1400.0
+            },
+            "body": {
+              "label": "IRON HERE"
+            },
+            "ttlS": 86400.0,
+            "ageS": 0.0,
+            "characterId": 1001,
+            "characterName": "Alpha Test",
+            "playerTag": "53b6ae84",
+            "rev": 1
+          }
+        ]
+      },
+      "expectedRows": {
+        "objects": [
+          {
+            "keyId": "alpha001",
+            "id": "p1",
+            "battlegroupId": "prd-srv-test-alpha-erg",
+            "characterId": 1001,
+            "characterName": "Alpha Test",
+            "kind": "pin",
+            "worldId": "survival_1",
+            "layout": "survival_1",
+            "geometry": {
+              "type": "point",
+              "x": 120000.0,
+              "y": -65000.0,
+              "z": 1400.0
+            },
+            "body": {
+              "label": "IRON HERE"
+            },
+            "expiresAt": 1794246400.0,
+            "receivedAt": 1794160000.0,
+            "rev": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "object-bad-kind",
+      "description": "kind is lower-case a-z, 0-9 and _ only.",
+      "serverNow": 1794160000.0,
+      "given": {
+        "rev": 0,
+        "rows": {
+          "sightings": [],
+          "presence": [],
+          "objects": []
+        },
+        "priorRequests": 0
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1/sync",
+        "headers": {
+          "Authorization": "Bearer gs1_alpha001_Qm9vdHN0cmFwVGVzdEtleUFscGhhMDAx",
+          "Content-Type": "application/json",
+          "X-Client-Version": "0.9.0"
+        },
+        "body": {
+          "since": 0,
+          "sentAt": 1794160000.0,
+          "identity": {
+            "characterName": "Alpha Test",
+            "characterId": 1001,
+            "battlegroupId": "prd-srv-test-alpha-erg"
+          },
+          "partition": {
+            "worldId": "survival_1",
+            "layout": "survival_1"
+          },
+          "position": null,
+          "records": [],
+          "objects": [
+            {
+              "id": "p1",
+              "kind": "Pin",
+              "scope": {
+                "worldId": "survival_1",
+                "layout": "survival_1"
+              },
+              "geometry": {
+                "type": "point",
+                "x": 120000.0,
+                "y": -65000.0,
+                "z": 1400.0
+              },
+              "body": {
+                "label": "IRON HERE"
+              },
+              "ttlS": 7200
+            }
+          ]
+        }
+      },
+      "expectedStatus": 400,
+      "expectedResponseKeys": [
+        "type",
+        "title",
+        "status",
+        "error",
+        "detail",
+        "field"
+      ],
+      "expectedResponse": {
+        "type": "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.md#invalid-field",
+        "title": "Request body is invalid",
+        "status": 400,
+        "error": "bad request",
+        "detail": "objects[0].kind is missing, unknown or out of range",
+        "field": "objects[0].kind"
+      },
+      "expectedRows": {
+        "presence": [],
+        "objects": []
+      }
+    },
+    {
+      "name": "object-body-too-big",
+      "description": "Every string is within 200 characters, but the canonical body text is over 512 bytes.",
+      "serverNow": 1794160000.0,
+      "given": {
+        "rev": 0,
+        "rows": {
+          "sightings": [],
+          "presence": [],
+          "objects": []
+        },
+        "priorRequests": 0
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1/sync",
+        "headers": {
+          "Authorization": "Bearer gs1_alpha001_Qm9vdHN0cmFwVGVzdEtleUFscGhhMDAx",
+          "Content-Type": "application/json",
+          "X-Client-Version": "0.9.0"
+        },
+        "body": {
+          "since": 0,
+          "sentAt": 1794160000.0,
+          "identity": {
+            "characterName": "Alpha Test",
+            "characterId": 1001,
+            "battlegroupId": "prd-srv-test-alpha-erg"
+          },
+          "partition": {
+            "worldId": "survival_1",
+            "layout": "survival_1"
+          },
+          "position": null,
+          "records": [],
+          "objects": [
+            {
+              "id": "p1",
+              "kind": "pin",
+              "scope": {
+                "worldId": "survival_1",
+                "layout": "survival_1"
+              },
+              "geometry": {
+                "type": "point",
+                "x": 120000.0,
+                "y": -65000.0,
+                "z": 1400.0
+              },
+              "body": {
+                "a": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                "b": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+                "c": "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+              },
+              "ttlS": 7200
+            }
+          ]
+        }
+      },
+      "expectedStatus": 400,
+      "expectedResponseKeys": [
+        "type",
+        "title",
+        "status",
+        "error",
+        "detail",
+        "field"
+      ],
+      "expectedResponse": {
+        "type": "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.md#invalid-field",
+        "title": "Request body is invalid",
+        "status": 400,
+        "error": "bad request",
+        "detail": "objects[0].body is missing, unknown or out of range",
+        "field": "objects[0].body"
+      },
+      "expectedRows": {
+        "presence": [],
+        "objects": []
+      }
+    },
+    {
+      "name": "object-unknown-field",
+      "description": "An envelope key the server does not know is refused: the envelope is closed, only the body is open.",
+      "serverNow": 1794160000.0,
+      "given": {
+        "rev": 0,
+        "rows": {
+          "sightings": [],
+          "presence": [],
+          "objects": []
+        },
+        "priorRequests": 0
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1/sync",
+        "headers": {
+          "Authorization": "Bearer gs1_alpha001_Qm9vdHN0cmFwVGVzdEtleUFscGhhMDAx",
+          "Content-Type": "application/json",
+          "X-Client-Version": "0.9.0"
+        },
+        "body": {
+          "since": 0,
+          "sentAt": 1794160000.0,
+          "identity": {
+            "characterName": "Alpha Test",
+            "characterId": 1001,
+            "battlegroupId": "prd-srv-test-alpha-erg"
+          },
+          "partition": {
+            "worldId": "survival_1",
+            "layout": "survival_1"
+          },
+          "position": null,
+          "records": [],
+          "objects": [
+            {
+              "id": "p1",
+              "kind": "pin",
+              "scope": {
+                "worldId": "survival_1",
+                "layout": "survival_1"
+              },
+              "geometry": {
+                "type": "point",
+                "x": 120000.0,
+                "y": -65000.0,
+                "z": 1400.0
+              },
+              "body": {
+                "label": "IRON HERE"
+              },
+              "ttlS": 7200,
+              "color": "red"
+            }
+          ]
+        }
+      },
+      "expectedStatus": 400,
+      "expectedResponseKeys": [
+        "type",
+        "title",
+        "status",
+        "error",
+        "detail",
+        "field"
+      ],
+      "expectedResponse": {
+        "type": "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.md#invalid-field",
+        "title": "Request body is invalid",
+        "status": 400,
+        "error": "bad request",
+        "detail": "objects[0].color is missing, unknown or out of range",
+        "field": "objects[0].color"
+      },
+      "expectedRows": {
+        "presence": [],
+        "objects": []
+      }
+    },
+    {
+      "name": "object-cap",
+      "description": "alpha001 already has 20 live objects: a 21st live upload is refused with type object-cap, and nothing of the request is stored (no presence row either). A replace of one of the 20 or a delete would pass.",
+      "serverNow": 1794160000.0,
+      "given": {
+        "rev": 20,
+        "rows": {
+          "sightings": [],
+          "presence": [],
+          "objects": []
+        },
+        "priorRequests": 0,
+        "fillerObjects": {
+          "count": 20,
+          "template": {
+            "keyId": "alpha001",
+            "id": "f0",
+            "battlegroupId": "prd-srv-test-alpha-erg",
+            "characterId": 1001,
+            "characterName": "Alpha Test",
+            "kind": "pin",
+            "worldId": "survival_1",
+            "layout": "survival_1",
+            "geometry": {
+              "type": "point",
+              "x": 120000.0,
+              "y": -65000.0,
+              "z": 1400.0
+            },
+            "body": {
+              "label": "FILLER"
+            },
+            "expiresAt": 1794163600.0,
+            "receivedAt": 1794159940.0,
+            "rev": 0
+          },
+          "vary": "row i (1..20) = template with id = f<i>, rev = i"
+        }
+      },
+      "request": {
+        "method": "POST",
+        "path": "/v1/sync",
+        "headers": {
+          "Authorization": "Bearer gs1_alpha001_Qm9vdHN0cmFwVGVzdEtleUFscGhhMDAx",
+          "Content-Type": "application/json",
+          "X-Client-Version": "0.9.0"
+        },
+        "body": {
+          "since": 0,
+          "sentAt": 1794160000.0,
+          "identity": {
+            "characterName": "Alpha Test",
+            "characterId": 1001,
+            "battlegroupId": "prd-srv-test-alpha-erg"
+          },
+          "partition": {
+            "worldId": "survival_1",
+            "layout": "survival_1"
+          },
+          "position": null,
+          "records": [],
+          "objects": [
+            {
+              "id": "p21",
+              "kind": "pin",
+              "scope": {
+                "worldId": "survival_1",
+                "layout": "survival_1"
+              },
+              "geometry": {
+                "type": "point",
+                "x": 120000.0,
+                "y": -65000.0,
+                "z": 1400.0
+              },
+              "body": {
+                "label": "IRON HERE"
+              },
+              "ttlS": 7200
+            }
+          ]
+        }
+      },
+      "expectedStatus": 400,
+      "expectedResponseKeys": [
+        "type",
+        "title",
+        "status",
+        "error",
+        "detail",
+        "field"
+      ],
+      "expectedResponse": {
+        "type": "https://github.com/sm18lr88/harvesting-dune/blob/master/docs/SYNC-PROTOCOL.md#object-cap",
+        "title": "Too many live objects",
+        "status": 400,
+        "error": "bad request",
+        "detail": "The key already has 20 live objects: delete one first.",
+        "field": "objects[0]"
+      },
+      "expectedRows": {
+        "presence": [],
+        "objects": [
+          {
+            "keyId": "alpha001",
+            "id": "f1",
+            "rev": 1
+          },
+          {
+            "keyId": "alpha001",
+            "id": "f2",
+            "rev": 2
+          },
+          {
+            "keyId": "alpha001",
+            "id": "f3",
+            "rev": 3
+          },
+          {
+            "keyId": "alpha001",
+            "id": "f4",
+            "rev": 4
+          },
+          {
+            "keyId": "alpha001",
+            "id": "f5",
+            "rev": 5
+          },
+          {
+            "keyId": "alpha001",
+            "id": "f6",
+            "rev": 6
+          },
+          {
+            "keyId": "alpha001",
+            "id": "f7",
+            "rev": 7
+          },
+          {
+            "keyId": "alpha001",
+            "id": "f8",
+            "rev": 8
+          },
+          {
+            "keyId": "alpha001",
+            "id": "f9",
+            "rev": 9
+          },
+          {
+            "keyId": "alpha001",
+            "id": "f10",
+            "rev": 10
+          },
+          {
+            "keyId": "alpha001",
+            "id": "f11",
+            "rev": 11
+          },
+          {
+            "keyId": "alpha001",
+            "id": "f12",
+            "rev": 12
+          },
+          {
+            "keyId": "alpha001",
+            "id": "f13",
+            "rev": 13
+          },
+          {
+            "keyId": "alpha001",
+            "id": "f14",
+            "rev": 14
+          },
+          {
+            "keyId": "alpha001",
+            "id": "f15",
+            "rev": 15
+          },
+          {
+            "keyId": "alpha001",
+            "id": "f16",
+            "rev": 16
+          },
+          {
+            "keyId": "alpha001",
+            "id": "f17",
+            "rev": 17
+          },
+          {
+            "keyId": "alpha001",
+            "id": "f18",
+            "rev": 18
+          },
+          {
+            "keyId": "alpha001",
+            "id": "f19",
+            "rev": 19
+          },
+          {
+            "keyId": "alpha001",
+            "id": "f20",
+            "rev": 20
+          }
+        ]
       }
     }
   ]
