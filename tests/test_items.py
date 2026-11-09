@@ -182,6 +182,49 @@ def test_unique_items_are_chance_finds_with_search_areas_and_other_regions(tmp_p
     assert ItemSources(tmp_path).items["regiscontainer2"]["chance"]  # kept in the cache
 
 
+DD_ONLY_CRAWL = {"built": 1, "materials": [], "uniques": [
+    {"id": "wing6", "name": "Roc Carrier Wing", "rarity": "Unique", "via": "schematic", "drops": [
+        ["deepdesert_1_03", 90_000, 0, 0, "Ultra Rare Container", 0.05, 1, 1],
+        ["deepdesert_1_07", 5_000, 5_000, 0, "Ultra Rare Container", 0.05, 1, 1],
+        ["deepdesert_1_07", 60_000, 0, 0, "Small Ultra Rare", 0.05, 1, 1]]},
+    {"id": "boots", "name": "Other Boots", "drops": [["deepdesert_1_05", 1, 1, 0, "Rare Container", 0.1, 1, 1]]}]}
+
+
+def _picked_wing(tmp_path, world):
+    det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+    det.items.ingest(DD_ONLY_CRAWL)
+    session(det, world)
+    pose(det, 0, 0, t=1)
+    det.vehicles.set_override("ornithopter")
+    det.ui("minimap_toggle", "item:wing6")
+    det.compute(2)
+    return det
+
+
+def test_a_chance_find_of_another_map_says_where_to_travel(tmp_path):
+    det = _picked_wing(tmp_path, "survival_1")
+    st = det.page_state()
+    assert st["dest"] is None and st["alternatives"] == []  # another map's places cannot be drawn here
+    assert "travel to Deep Desert" in det.badge(now=0)
+    assert det.status_text() == "travel to Deep Desert"
+    assert det.snapshot()["status"] == det.status_text()  # the settings card
+
+
+def test_a_chance_find_in_the_deep_desert_draws_once_the_week_layout_is_known(tmp_path):
+    det = _picked_wing(tmp_path, "deepdesert_1")
+    assert det.page_state()["alternatives"] == []
+    assert det.status_text() == "waiting for this week's map" and "waiting for this week's map" in det.badge(now=0)
+    det.on_shipwrecks({"map": "deepdesert_1_07", "wrecks": []})  # the minimap loaded this week's map file
+    det.compute(3)
+    st = det.page_state()
+    line, *rings = st["alternatives"]
+    assert line["kind"] == "chance" and line["dash"] and [r["kind"] for r in rings] == ["chance-area", "chance-area"]
+    assert st["dest"]["title"] == "Roc Carrier Wing · most likely place" and "5.0% chance" in det.badge(now=0)
+    det.on_shipwrecks({"map": "deepdesert_1_05", "wrecks": []})  # a week without it
+    det.compute(4)
+    assert det.page_state()["alternatives"] == [] and det.status_text() == "none in this week's map"
+
+
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
 def test_item_search_forgives_typos_and_ranks_the_closest_names_first():
     html = resources.files("harvesting_dune").joinpath("viewer.html").read_text("utf8")

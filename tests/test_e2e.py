@@ -59,6 +59,44 @@ class FakePage:
         return [e for e in self.evaluated if f"__dd.{fn}(" in e]
 
 
+class StubPage:
+    """A page as the runner sees it, recording every expression sent into it."""
+
+    def __init__(self, pid: str, url: str) -> None:
+        self.id, self.url, self.closed, self.evaluated = pid, url, asyncio.Event(), []
+
+    @property
+    def is_minimap(self) -> bool:
+        return "minimap" in self.url
+
+    async def evaluate(self, expr: str, **_) -> str:
+        fn = expr.split("(", 1)[0].rsplit(".", 1)[1]  # the bridge function called
+        if fn != "setMinimapHidden":  # the minimap filter has its own rules and tests
+            self.evaluated.append(fn)
+        return "ok"
+
+
+def test_pages_get_only_what_changed_and_a_reloaded_page_gets_everything(tmp_path):
+    async def scenario():
+        det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+        hub = CompanionHub(1)
+        runner = Runner(det, hub)
+        big, mini = StubPage("b", "https://app.gaming.tools/dune"), StubPage("m", "https://app.gaming.tools/dune/minimap")
+        hub.pages = {"b": big, "m": mini}
+        await runner.push()
+        assert big.evaluated == ["set", "renderPicker"] and mini.evaluated == ["set", "renderBadge"]
+        det.publish_rev += 1  # a bump with nothing new to show
+        await runner.push()
+        assert len(big.evaluated) == 2 and len(mini.evaluated) == 2
+        det.ui("resource", "iron")  # no position yet: same map state, new picker choice and badge text
+        await runner.push()
+        assert big.evaluated[2:] == ["renderPicker"] and mini.evaluated[2:] == ["renderBadge"]
+        await runner._push_page(mini)  # reloaded: its ping answered 'empty'
+        assert mini.evaluated[3:] == ["set", "renderBadge"] and len(big.evaluated) == 3
+
+    asyncio.run(scenario())
+
+
 async def until(pred, activity: asyncio.Event, timeout: float = 15.0) -> None:
     """Re-check `pred` whenever the detector calls into a page; fail after `timeout` seconds."""
     async with asyncio.timeout(timeout):

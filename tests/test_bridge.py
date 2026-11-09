@@ -479,6 +479,51 @@ def test_objects_draw_with_no_alternatives_and_vanish_by_absence():
     assert gone["result"] == "empty" and gone["drawn"] == []
 
 
+def test_a_push_applies_only_the_parts_that_changed():
+    code = r"""
+const listeners = [], timers = [];
+const wv = { postMessage() {}, addEventListener: (_, f) => listeners.push(f), removeEventListener() {}, dispatchEvent: (e) => { for (const f of [...listeners]) f(e); } };
+globalThis.window = globalThis; globalThis.chrome = { webview: wv };
+globalThis.location = { pathname: '/dune/minimap' };
+globalThis.document = { readyState: 'loading', getElementById: () => null };
+globalThis.__harvestingDuneEmit = () => {}; globalThis.fetch = async () => new Response('[]');
+// timers run when the test says so: the 30 ms redraw yes, the 60 s dead-man switch never
+globalThis.setTimeout = (fn, ms) => timers.push([fn, ms || 0]); globalThis.clearTimeout = () => {};
+globalThis.setInterval = () => 0; globalThis.clearInterval = () => {};
+const flush = () => { for (let t; (t = timers.findIndex(([, ms]) => ms < 1000)) >= 0;) timers.splice(t, 1)[0][0](); };
+eval(SCRIPT);
+const n = { actors: 0, dest: 0, route: 0, redraws: 0 };
+wv.addEventListener('message', (e) => { const m = e.data; if (m && m.__dd) {
+  if (m.topic === 'dune.map.actors') n.actors++; if (m.topic === 'dune.trackedDestination') n.dest++; if (m.topic === 'dune.map.route') n.route++; } });
+const layer = { vectors: new Map(), clearVectors() { n.redraws++; }, addPolyline() {} };
+const map = { layers: { createStaticLayer: () => layer, addLayer() {} }, view: { translate: (x, y) => ({ x, y }) } };
+map._createdLayers = [{ _items: new Map([[1, { data: { x: 5, y: 7 }, point: { x: 5, y: 7 } }]]) }];
+wv.dispatchEvent({ data: { type: 'delta', topic: 'dune.map.actors', payload: { actors: [{ id: 1 }] } } });
+wv.dispatchEvent({ data: { type: 'delta', topic: 'dune.player', payload: { x: 0, y: 0, z: 0 } } });
+const S = { dest: { hasDestination: true, x: 1, y: 2, z: 3, title: 'Iron', detail: '~4 min' },
+  route: { mapId: 'DD', stops: [{ x: 1, y: 2, z: 3 }] }, extraActors: [{ id: 'dd-a' }],
+  alternatives: [{ x: 1000, y: 0, kind: 'area', color: 'red', weight: 2 }], objects: [], stale: [], problem: null };
+const step = (state) => { const before = { ...n }; __dd.set(JSON.parse(JSON.stringify(state))); flush();
+  return Object.fromEntries(Object.keys(n).map((k) => [k, n[k] - before[k]])); };
+const log = { first: step(S), same: step(S), staleOnly: step({ ...S, stale: ['SpiceField:1:2'] }),
+  destText: step({ ...S, stale: ['SpiceField:1:2'], dest: { ...S.dest, detail: '~5 min' } }),
+  actors: step({ ...S, stale: ['SpiceField:1:2'], dest: { ...S.dest, detail: '~5 min' }, extraActors: [{ id: 'dd-b' }] }),
+  lines: step({ ...S, stale: ['SpiceField:1:2'], dest: { ...S.dest, detail: '~5 min' }, extraActors: [{ id: 'dd-b' }], alternatives: [] }),
+  stats: __dd.stats };
+console.log(JSON.stringify(log)); process.exit(0);
+""".replace("SCRIPT", json.dumps(BRIDGE_SCRIPT))
+    out = subprocess.run(["node", "-"], input=code, capture_output=True, text=True, timeout=30, check=False)
+    assert out.returncode == 0, out.stderr
+    r = json.loads(out.stdout.splitlines()[0])
+    assert r["first"] == {"actors": 1, "dest": 1, "route": 1, "redraws": 1}
+    assert r["same"] == {"actors": 0, "dest": 0, "route": 0, "redraws": 0}  # an identical push costs the page nothing
+    assert r["staleOnly"] == {"actors": 0, "dest": 0, "route": 0, "redraws": 0}
+    assert r["destText"] == {"actors": 0, "dest": 1, "route": 0, "redraws": 0}  # unrelated: no actor list, no layer
+    assert r["actors"] == {"actors": 1, "dest": 0, "route": 0, "redraws": 0}
+    assert r["lines"] == {"actors": 0, "dest": 0, "route": 0, "redraws": 1}
+    assert r["stats"] == {"sets": 6, "actors": 2, "dest": 2, "route": 1, "redraws": 2, "dom": 0}
+
+
 def test_our_own_synthetic_destination_is_never_emitted_back():
     emitted = run()["emitted"]
     dests = [m["payload"] for m in emitted if m.get("topic") == "dune.trackedDestination"]

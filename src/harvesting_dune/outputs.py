@@ -249,18 +249,22 @@ class OutputsMixin:
             where = "waiting for position"
         elif top:
             where = f"best area {top[0].distance_m} m away"
-        elif self._known_nodes:
-            where = "no reachable area"
-        elif self.resource.confirmed_only:
-            where = "no active field of this size seen yet"
-        elif self.max_km > 0:
-            where = f"none within {self.max_km:g} km" + (" in the PvP area" if self._pvp_only_here() else "")
-        elif self._pvp_only_here():
-            where = "none known in the PvP area yet"
         else:
-            where = "none known here yet"
+            where = self._status_none()
         stale = f" · {len(self.scan.stale)} stale hidden" if self.scan.stale else ""
         return where + stale
+
+    def _status_none(self) -> str:
+        away = self.item_away()
+        if away:
+            return away
+        if self._known_nodes:
+            return "no reachable area"
+        if self.resource.confirmed_only:
+            return "no active field of this size seen yet"
+        if self.max_km > 0:
+            return f"none within {self.max_km:g} km" + (" in the PvP area" if self._pvp_only_here() else "")
+        return "none known in the PvP area yet" if self._pvp_only_here() else "none known here yet"
 
     def badge(self, now: float | None = None) -> str | None:
         """One short line that fits under the minimap (~45 characters)."""
@@ -300,6 +304,12 @@ class OutputsMixin:
                 done = self.mined_nodes.near(top[0].x, top[0].y, {m.lower() for m in self.resource.marker_types})
                 where += f" · {len(top[0].nodes)} left · {done} mined" if done else f" · {len(top[0].nodes)} nodes"
             return where
+        return self._badge_none()
+
+    def _badge_none(self) -> str:
+        away = self.item_away()
+        if away:
+            return away
         if self._known_nodes:
             return "none reachable"
         if self.resource.confirmed_only:
@@ -307,6 +317,20 @@ class OutputsMixin:
         if self.max_km > 0:
             return f"none within {self.max_km:g} km"
         return "none in PvP" if self._pvp_only_here() else "none known"
+
+    def item_away(self) -> str | None:
+        """For an item with no place on this map: the region to travel to, or why this map has none yet."""
+        key, world = self.resource_key, self.store.world
+        if not self.items.is_item(key) or not world or not world[0]:
+            return None
+        layout = self._item_map()
+        if self.items.sources(key, layout):
+            return None  # places here: the usual text
+        if any(self.items.sources(key, m) for m in self.items.maps_for(world[0])):
+            # the Deep Desert: its places depend on the week's layout
+            return "none in this week's map" if layout else "waiting for this week's map"
+        away = self.items.elsewhere(key, world[0], limit=1)
+        return f"travel to {away[0]['region']}" if away else None
 
     def _badge_tail(self) -> str:
         if self.lines_enabled and not self.lines_active:

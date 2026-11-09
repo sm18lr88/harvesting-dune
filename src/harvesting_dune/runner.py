@@ -6,7 +6,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
+from urllib.parse import urlsplit
 
 from . import hotkeys, logsetup
 from .app import Detector
@@ -18,6 +20,7 @@ log = logging.getLogger(__name__)
 
 SCAN_REFRESH_S = 600.0
 RESTART_BACKOFF_S = (1.0, 5.0, 30.0)  # a crashing background task is restarted, slower each time
+MAP_WINDOW = re.compile(r"^/dune/?$")  # the only page bridge.js shows the picker in
 
 
 def _js_call(fn: str, *args: object) -> str:
@@ -30,6 +33,8 @@ class Runner:
         self.hub = hub
         self.exit_when_gone_s = exit_when_gone_s  # 0: keep waiting for the companion forever
         self._pushed_rev = -1
+        self._sent: dict[str, dict[str, str]] = {}  # page id -> slot -> the expression that page last got
+        self.pushed: dict[str, list[int]] = {}  # page url -> [calls, bytes] sent by push, for diagnosis
         self._minimap_rev = -1
         self._scan_key: tuple | None = None
         self._scan_failures = 0
@@ -38,24 +43,50 @@ class Runner:
         self.sync = None  # sync.SyncClient, built by sync_loop on first use
         hub.on_attach.append(self._push_page)
 
-    def _expressions(self) -> list[str]:
+    def _expressions(self) -> dict[str, str]:
         if not self.det.gate_open():  # gate.py: nothing of ours on the companion pages
-            return [_js_call("set", self.det.page_state()), _js_call("hidePicker"), _js_call("renderBadge", None)]
+            return {"set": _js_call("set", self.det.page_state()), "picker": _js_call("hidePicker"),
+                    "badge": _js_call("renderBadge", None)}
         p = self.det.picker()
-        return [
-            _js_call("set", self.det.page_state()),
-            _js_call("renderPicker", p["resources"], p["vehicles"], p["selected"], p["vehicle"], p["status"], p["minimap"]),
-            _js_call("renderBadge", self.det.badge()),
-        ]
+        return {
+            "set": _js_call("set", self.det.page_state()),
+            "picker": _js_call("renderPicker", p["resources"], p["vehicles"], p["selected"], p["vehicle"], p["status"], p["minimap"]),
+            "badge": _js_call("renderBadge", self.det.badge()),
+        }
 
-    async def _push_page(self, page: Page) -> None:
-        if page.is_minimap:
-            self._minimap_rev = -1  # (re)attached minimap: make sure its filter matches
-        for expr in self._expressions():
+    async def _send(self, page: Page, exprs: dict[str, str]) -> None:
+        """Only what this page shows and has not got yet: an unchanged push costs the page nothing."""
+        path = urlsplit(page.url).path
+        sent = self._sent.setdefault(page.id, {})
+        for slot, expr in exprs.items():
+            if (slot == "picker" and not MAP_WINDOW.match(path)) or (slot == "badge" and "minimap" not in path):
+                continue
+            if sent.get(slot) == expr:
+                continue
             try:
                 await page.evaluate(expr)
+                sent[slot] = expr
             except Exception as exc:  # noqa: BLE001 - one failure must not stop the detector
+                sent.pop(slot, None)
                 logsetup.limited(log, f"push:{page.url}", "sending state to %s failed: %r", page.url, exc)
+            stat = self.pushed.setdefault(page.url, [0, 0])
+            stat[0] += 1
+            stat[1] += len(expr)
+
+    async def _push_page(self, page: Page) -> None:
+        """A (re)attached or reloaded page holds none of our state: send it everything."""
+        if page.is_minimap:
+            self._minimap_rev = -1  # (re)attached minimap: make sure its filter matches
+        self._sent.pop(page.id, None)
+        await self._send(page, self._expressions())
+
+    async def _push_all(self) -> None:
+        exprs = self._expressions()
+        for pid in [pid for pid in self._sent if pid not in self.hub.pages]:
+            del self._sent[pid]
+        for page in list(self.hub.pages.values()):
+            if not page.closed.is_set():
+                await self._send(page, exprs)
 
     async def apply_minimap_filter(self) -> None:
         """Write the minimap's own filter list (the minimap page reloads to apply it)."""
@@ -76,8 +107,7 @@ class Runner:
         if self.det.publish_rev == self._pushed_rev:
             return
         self._pushed_rev = self.det.publish_rev
-        for expr in self._expressions():
-            await self.hub.broadcast(expr)
+        await self._push_all()
         self.det.publish_viewer()
 
     async def consume(self) -> None:
@@ -122,7 +152,7 @@ class Runner:
                     last_view = now  # control page: distances to cages etc. change as you move
                     self.det.publish_viewer()
                 if self.det.scan_refresh_due(now):
-                    await self.hub.broadcast(_js_call("set", self.det.page_state()))  # stale list first
+                    await self._push_all()  # stale list first
                     await self.hub.broadcast(_js_call("refreshScan"))
                     self.det.scan_refreshed(now)
                     log.info("companion scan layer reloaded without %s confirmed-stale entries", len(self.det.scan.stale))

@@ -18,11 +18,16 @@
     hideSpawnPoints: true, // empty spice spawn points look like fields on the companion map
     alternatives: [], objects: [], pose: null, maps: [], altLayer: null, altMap: null, altTransform: null,
     stale: new Set(),
+    // what we made this page do (read over DevTools to diagnose overlay cost)
+    stats: { sets: 0, actors: 0, dest: 0, route: 0, redraws: 0, dom: 0 },
   });
 
   // Synthetic messages go through the page's own listeners, exactly like native ones.
-  const dispatch = (topic, payload) =>
+  const COUNTED = { 'dune.map.actors': 'actors', 'dune.trackedDestination': 'dest', 'dune.map.route': 'route' };
+  const dispatch = (topic, payload) => {
+    if (COUNTED[topic]) dd.stats[COUNTED[topic]]++;
     wv.dispatchEvent(new MessageEvent('message', { data: { type: 'delta', topic, payload, __dd: 1 } }));
+  };
 
   const applyDest = () => {
     if (dd.nativeDest && dd.nativeDest.hasDestination) return; // the player's own destination wins
@@ -331,6 +336,7 @@
         dd.altMap = map;
       }
       dd.altLayer.clearVectors();
+      dd.stats.redraws++;
       const tt = calibrate(map);
       if (!tt || !pose || (!dd.alternatives.length && !dd.objects.length)) return tt ? 'empty' : 'uncalibrated';
       const from = map.view.translate(pose.x, pose.y, tt);
@@ -370,7 +376,13 @@
     dd.altPhase = !dd.altPhase;
     return redrawAlternatives(true);
   };
-  setInterval(() => { try { dd.pulse(); } catch (err) { report('pulse', err); } }, 900);
+  // the beat runs only while something pulses: no timer work on a page with nothing to animate
+  let pulseTimer = 0;
+  const pulseWhenNeeded = () => {
+    const want = dd.alternatives.some((a) => a && a.pulse);
+    if (want && !pulseTimer) pulseTimer = setInterval(() => { try { dd.pulse(); } catch (err) { report('pulse', err); } }, 900);
+    else if (!want && pulseTimer) { clearInterval(pulseTimer); pulseTimer = 0; dd.altPhase = false; }
+  };
 
   // (grid cell, x, y) of the page's own markers: the detector fits the map grid from these, so
   // grid cells and PvP rows follow the map as the companion draws it, week after week.
@@ -446,6 +458,7 @@
       return;
     }
     if (!box) {
+      dd.stats.dom++;
       box = document.createElement('div');
       box.id = '__dd_problem';
       box.setAttribute('role', 'status');
@@ -464,20 +477,38 @@
     document.getElementById('__dd_problem_text').textContent = p.text;
   };
 
+  // Each part of the state as last applied: a push applies only the parts that changed, so an
+  // unrelated change never makes the page re-process its actor list or our layer.
+  const applied = {};
+  const changed = (part, value) => {
+    let sig;
+    try { sig = JSON.stringify(value); } catch (_) { delete applied[part]; return true; } // unreadable: apply as before
+    if (applied[part] === sig) return false;
+    applied[part] = sig;
+    return true;
+  };
   dd.set = (state) => {
     state = state || {};
+    dd.stats.sets++;
     dd.dest = state.dest || null;
     dd.alternatives = state.alternatives || [];
     dd.objects = state.objects || [];
     dd.route = state.route || null;
     dd.extraActors = state.extraActors || [];
     dd.stale = new Set(state.stale || []);
-    applyDest();
-    applyRoute();
-    applyActors();
-    try { renderProblem(state.problem); } catch (err) { report('problem', err); }
-    // the page redraws its route line after applyRoute; draw ours right after it
-    setTimeout(() => redrawAlternatives(true), 30);
+    const route = changed('route', dd.route);
+    if (changed('dest', dd.dest)) applyDest();
+    if (route) applyRoute();
+    if (changed('extraActors', dd.extraActors)) applyActors();
+    if (changed('problem', state.problem || null)) {
+      try { renderProblem(state.problem); } catch (err) { report('problem', err); }
+    }
+    pulseWhenNeeded();
+    // the page redraws its route line after applyRoute; draw ours right after it (a new route can
+    // be the only calibration reference)
+    if (changed('layer', [dd.alternatives, dd.objects]) || (route && !dd.altTransform)) {
+      setTimeout(() => redrawAlternatives(true), 30);
+    }
     return 'ok';
   };
 
@@ -498,6 +529,7 @@
     }
     let box = document.getElementById('__dd_picker');
     if (!box) {
+      dd.stats.dom++;
       box = document.createElement('div');
       box.id = '__dd_picker';
       box.style.cssText = 'position:fixed;top:56px;right:12px;z-index:2147483647;display:flex;gap:6px;align-items:center;'
@@ -536,6 +568,7 @@
       const panel = document.getElementById('__dd_mm_panel');
       const sig = JSON.stringify(minimap);
       if (panel.dataset.sig !== sig) {
+        dd.stats.dom++;
         panel.dataset.sig = sig;
         panel.innerHTML = '';
         const row = (text, checked, onChange, bold) => {
@@ -561,6 +594,7 @@
       const s = document.getElementById(id);
       const sig = JSON.stringify(opts);
       if (s.dataset.sig !== sig) {
+        dd.stats.dom++;
         s.innerHTML = '';
         for (const [v, t] of opts) { const o = document.createElement('option'); o.value = v; o.textContent = t; s.appendChild(o); }
         s.dataset.sig = sig;
@@ -620,6 +654,7 @@
     let b = document.getElementById('__dd_badge');
     if (!text) { if (b) b.remove(); return 'ok'; }
     if (!b) {
+      dd.stats.dom++;
       b = document.createElement('div');
       b.id = '__dd_badge';
       b.style.cssText = 'position:fixed;left:50%;bottom:4px;transform:translateX(-50%);z-index:2147483647;pointer-events:none;'
