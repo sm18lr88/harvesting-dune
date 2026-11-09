@@ -169,6 +169,12 @@ Guild sync shares what you see with your guild. Your guild admin gives you a gui
 
 The page never shows the key again. It shows only "key saved", with **Change** and **Remove**.
 
+The tool works only with a key that the server accepts:
+
+- With no key, or a rejected or expired key, the tool draws nothing on the companion's map. The settings page shows only the key field and the reason.
+- If the server cannot be reached, the tool keeps working for 72 h after the last good check.
+- For details, read [Key gate and datasets](docs/HOW-IT-WORKS.md#key-gate-and-datasets).
+
 What the tool shares:
 
 - your character name and your server,
@@ -178,7 +184,8 @@ What the tool shares:
 What you see from the guild:
 
 - Rings on the map. Green is spice, pink is a spice blow, orange is a downed ship, violet is a live ore node, yellow is a guildmate.
-- A ring fades as it gets older. An ore ring goes away after the respawn time of that ore. While the node is still there, the guildmate who sees it confirms it every 20 min, so the ring stays. A guildmate ring is full while they play and faded when their syncs are late. It goes away when they leave the game. The list then says "left 4 min ago" for 15 min.
+- You get no ring for a find that only you shared, because your map already shows it. You also get no ore ring where your own companion shows the node, saw it gone, or you mined it.
+- A ring fades as it gets older. An ore ring goes away after the respawn time of that ore. While the node is still there, the guildmate who sees it confirms it every 20 min, so the ring stays. A guildmate ring is full while they play and faded when their syncs are late. A guildmate in the menus gets no ring. The ring goes away when they leave the game. The list then says "left 4 min ago" for 15 min.
 - A list of guildmates online. Untick a guildmate to hide that guildmate on the minimap.
 - **Shared finds** on the settings page: what each find is, how old it is, and who saw it.
 
@@ -190,7 +197,7 @@ Your own eyes always win. If you see a node live, a guild report never hides it.
 
 **Pause sync** stops all sending and receiving. Your key stays saved.
 
-**Characters** (a section of the settings page) lists the characters of your guild. Click one to see its skills, stats, schematics, Landsraad progress, achievements and this session. Type in the schematics box to find who can craft something. Typos are fine. Your own row shows what the guild sees of you.
+**Characters** (a section of the settings page) lists the characters of your guild. A player's alt characters are listed together under one heading. Click a character to see its skills, stats, schematics, Landsraad progress, achievements and this session. Type in the schematics box to find who can craft something. Typos are fine. Your own row shows what the guild sees of you.
 
 - **Share my character** is on by default. Turn it off and the server deletes your profile.
 - **Share this session** is on by default. Turn it off and your XP, dailies and loot of this session stay private.
@@ -229,7 +236,7 @@ Use the search **What are you looking for?** at the top of the settings page to 
 - The card of the part has three groups: **Downed ships**, **Fixed shipwrecks** and **Containers & corpses**. Each row shows the best chance, the amount, the average amount for each source and the nearest place.
 - The lines lead to the best sources. A downed ship counts only after the game showed it to you.
 
-The section **Ships & wrecks** has three searches. Each one leads you on one trip: first to the nearest place, then on to the next nearest. The route on the map shows up to 5 stops in that order.
+The section **Ships & wrecks** has three searches. Each one leads you on one trip: first to the nearest place, then on to the next nearest. The route on the map shows up to 5 stops in that order. The stop you head to stays your target unless another stop is clearly nearer (15 %).
 
 | Search | What it finds |
 |---|---|
@@ -323,10 +330,6 @@ To save the result to share it, add the option `-Report`. The doctor saves the r
 | `data-run.prev.log` | The log of the previous detector run, after a restart. |
 
 If the log shows "No DevTools feed on port 9231", the companion started before the installation. Close the companion (tray icon > Exit), and open it again.
-
-## License
-
-The repository has no license file yet.
 
 ## Contributing
 

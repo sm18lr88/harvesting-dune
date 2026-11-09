@@ -21,7 +21,7 @@ Flat package: one `Detector` state machine (no I/O except its own data files) pl
 | Resource catalog, respawn defaults | `catalog.py` | `NEVER_TARGET`, `marker_of`, `resource_of` |
 | Looted materials, rare cages | `loot.py`, `itemsources.py`, `loot_crawl.js` | "Fallen Shipwreck" rows sit at (0,0,0): never a place, put on seen ships |
 | Downed ships (alert, memory, gone/emptied) | `ships.py` (`DownedShips`, `parse_wrecks`) | matched by position: a reloaded ship gets a new actor id |
-| Search variants (vehicle wrecks, shipwrecks) | `catalog.Resource.variant_of` / `actor_types` / `tour` | `MINIMAP_RESOURCES` = own tick box; `tour` = nearest-first route stops |
+| Search variants (vehicle wrecks, shipwrecks) | `catalog.Resource.variant_of` / `actor_types` / `tour` | `MINIMAP_RESOURCES` = own tick box; `tour` = nearest-first route stops; `ranking._tour_kept` keeps the current stop unless another is 15 % nearer (`SWITCH_MARGIN`) |
 | Named shipwrecks | `bridge.js shipwrecksFromData` -> `runner.load_shipwrecks` -> `app.on_shipwrecks` | from the companion's map data file |
 | Chance finds (unique gear, schematics) | `loot_crawl.js` `uniques` -> `itemsources` (`CHANCE_GROUP`, `elsewhere`), `Resource.chance` -> `ranking` (order by `Area.find_chance`), `outputs.chance_marks` -> `bridge.js` rings/dashes/pulse | no cyan route for chance items |
 | Farm route mode (ordered sites and stops) | `routes.py` (`parse_routes`, `FarmRun`, done times), `farm.py` (mixin: actions, marks, text), the server's `routes` dataset (none without it; tests: `helpers.datasets`) | off by default; never changes the ranking; frozen order; `route-stop` rings carry `num`; skip = Ctrl+Alt+N |
@@ -30,7 +30,7 @@ Flat package: one `Detector` state machine (no I/O except its own data files) pl
 | Companion transport (DevTools) | `feed.py` (`CompanionHub`, `Page`, `to_bus`) | injects `bridge.js` |
 | Live loops, supervision | `runner.py` | failed loops are logged and restarted |
 | Settings page server | `server.py`, `viewer.html` | 127.0.0.1:8765 only |
-| Guild sync state, publish/receive | `peers.py`, `peerview.py` | in memory only; never ranking nodes, never `store.py` |
+| Guild sync state, publish/receive | `peers.py`, `peerview.py` | in memory only; never ranking nodes, never `store.py`; `peerview._shows_peer_ring`: no ring for a row only our key reported, nor for ore our companion shows live, saw gone or we mined |
 | Shared overlay objects (pins) | `objects.py` (`ObjectsMixin`, a base of `PeerMixin`) -> `bridge.js RENDER` | memory only; never `dest`, `route` or `extraActors` |
 | Guild sync transport (HTTPS, gzip) | `sync.py` | private CA `sync-ca.pem`; records travel only with their partition |
 | Guild sync cadence, wake-ups, backoff | `syncloop.py` -> `runner.sync_loop` | 15/60/180 s by state; `det.sync_wake()` syncs at once; WARNING at most |

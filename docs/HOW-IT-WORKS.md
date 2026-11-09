@@ -92,6 +92,7 @@ The tool keeps the terrain per map and per Deep Desert layout.
 
 - **Downed ships:** an alert on the badge for 90 s. The ship stays a target for 30 min (estimate) after the game unloads it. It is gone when you are within 400 m and the game does not show it. It is emptied when you opened all three of its containers. The tool counts the containers by place, because a container that loads again gets a new actor id. The companion always shows downed ships on the minimap; the tool never hides them.
 - **One trip, nearest first:** for these single places, the tool does not rank by value. The target is the nearest place, then always the nearest one left from there. The route shows up to 5 stops in that order, and no thin lines.
+- **The next stop stays:** the stop you head to stays first unless another stop is more than 15 % nearer. If the route search skips that stop for a moment, the tool keeps it with its last estimate. A ship that is gone or emptied still moves the trip on.
 - **Parts from downed ships:** gaming.tools lists the loot of a downed ship ("Fallen Shipwreck", PvE and PvP variants) at the map origin, because the ship has no fixed place. The tool never uses that position. It puts that loot on each downed ship that it saw. In the Deep Desert, the loot is the same in every weekly layout, so the tool does not wait for the layout to be found.
 - **Parts in named shipwrecks:** a container within 200 m of a shipwreck's map marker shows under the name of the wreck on the part's card.
 
@@ -180,7 +181,7 @@ The wire format is in [SYNC-PROTOCOL.md](SYNC-PROTOCOL.md).
 Data flow:
 
 1. The detector sees a strong sighting. The peers mixin puts it in the outbox. One note is kept per class, type and 20 m cell. A live ore, crystal or stone node goes out once. It goes again when it changes, when it was gone and is live again, or 20 min later if it is still there.
-2. The "guild sync" loop (`syncloop.py`) sends the outbox. It sends every 15 s while you move or have finds to send, every 60 s while nothing changes, and every 180 s in the menus. Entering a world, a new key or opening the guild lists sends at once. It also sends your name, server and, if shared, position. Bodies over 1 KB travel gzipped.
+2. The "guild sync" loop (`syncloop.py`) sends the outbox. The cadence depends on what you do (see [SYNC-PROTOCOL.md](SYNC-PROTOCOL.md#client)). Entering a world, a new key or opening the guild lists sends at once. It also sends your name, server and, if shared, position. Bodies over 1 KB travel gzipped.
 3. The server stores the rows. It answers with what the guild sent since the last poll.
 4. `ingest_peer` merges the answer in memory. The rows become rings on the map and lists on the settings page.
 
@@ -188,7 +189,9 @@ Data flow:
 
 **Ages:** the server sends each row's age, not a clock time. The detector turns the age into feed-clock time. Thus, replays and the live feed age rows the same way. Rings fade with age. A guildmate's ring is full while they are online, faded when they are late, and gone when they leave (the server says which; see SYNC-PROTOCOL.md "Presence").
 
-**Objects (pins):** the server keeps them in their own `objects` table. An object has an id, a kind, a scope, an optional point, a small body and a lifetime. The server checks the envelope, not the body. So a new kind needs no server change. A delete is an upload with a lifetime of 0. Revoking a key, or its idle expiry, ends its objects for everyone. The sweep deletes them a day later. Caps apply when an object is made: 20 live per key, 300 per battlegroup, a body of 512 bytes and a lifetime of 24 h. Objects share the `since`/`next` cursor with sightings. They come for the whole battlegroup. The detector keeps them in memory and draws only those for your map and layout.
+**Rings that add nothing are not drawn:** the server sends your own rows back. A row that only your key reported gets no ring, because your map already shows it. A guild ore ring is also dropped where your own companion shows the node live, saw it gone, or you mined it.
+
+**Objects (pins):** the server checks the envelope of an object, not its body. So a new kind needs no server change. The detector keeps objects in memory and draws only those for your map and layout. A pin lives 2 h. The envelope, caps, lifetime and delete rules are in [SYNC-PROTOCOL.md](SYNC-PROTOCOL.md#objects).
 
 **Failures:** a failed sync waits 30 s, 1 min, 2 min, 5 min, then 10 min. It logs a warning at most once a minute. The rest of the detector keeps running. Finds that did not go out are sent with the next sync, but only in the same world.
 
