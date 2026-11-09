@@ -149,7 +149,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             body = json.loads(raw)
         except (ValueError, RecursionError):  # RecursionError: nesting deeper than the parser's stack
             raise Rejected(400, invalid("body", "The body is not JSON, or nests too deep.")) from None
-        if isinstance(body, dict) and isinstance(body.get("records"), list):
+        if not isinstance(body, dict):  # every route takes an object; also stops deep arrays where the stack is big enough to parse them
+            raise Rejected(400, invalid("body", "The body must be a JSON object."))
+        if isinstance(body.get("records"), list):
             self.n = len(body["records"])
         return getattr(srv.api, route)(key, body, ip, now)
 
