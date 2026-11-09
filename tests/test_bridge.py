@@ -524,6 +524,63 @@ console.log(JSON.stringify(log)); process.exit(0);
     assert r["stats"] == {"sets": 6, "actors": 2, "dest": 2, "route": 1, "redraws": 2, "dom": 0}
 
 
+GTMAP = r"""
+export class G {
+  constructor() {
+    this._createdLayers = [{ _items: new Map([[1, { data: { x: 5, y: 7 }, point: { x: 5, y: 7 } }]]) }];  // a page marker: calibration
+    this.layers = { createStaticLayer: () => globalThis.layer, addLayer() {} };
+    this.view = { translate: (x, y) => ({ x, y }) };
+  }
+  frame() { requestAnimationFrame(() => {}); }  // the render loop
+  setMarkers() { return 'native'; }
+}
+export const helper = () => 1;
+"""
+
+LATE = r"""
+globalThis.window = globalThis;
+globalThis.chrome = { webview: { postMessage() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent() {} } };
+globalThis.location = { pathname: '/dune/minimap', origin: 'file://' };
+globalThis.document = { readyState: 'complete', getElementById: () => null };
+globalThis.__harvestingDuneEmit = () => {}; globalThis.fetch = async () => new Response('[]');
+globalThis.requestAnimationFrame = (cb) => setTimeout(cb, 0);
+const drawn = [];
+globalThis.layer = { clearVectors() { drawn.length = 0; }, addPolyline: (pts) => drawn.push(pts.length) };
+(async () => {
+  const mod = await import(MODULE);
+  const map = new mod.G();                    // the page made its map before the bridge came
+  const native = mod.G.prototype.setMarkers, raf = requestAnimationFrame;
+  (0, eval)(SCRIPT);
+  const before = __dd.redrawAlternatives(true);
+  map.frame();                                // gtmap asks for a frame: its module is on the stack
+  for (let i = 0; i < 500 && mod.G.prototype.setMarkers === native; i++) await new Promise((r) => setImmediate(r));
+  const wrapped = mod.G.prototype.setMarkers !== native;
+  const result = map.setMarkers();            // the page's next call on its map
+  const restored = mod.G.prototype.setMarkers === native && requestAnimationFrame === raf;
+  __dd.set({ alternatives: [{ x: 1000, y: 0, kind: 'area', color: 'red', weight: 2 }] });
+  __dd.pose = { x: 0, y: 0, z: 0 };
+  const after = __dd.redrawAlternatives(true);
+  const later = new mod.G();                  // a map made after the bridge: the constructor hook
+  console.log(JSON.stringify({ before, wrapped, result, restored, after, drawn, maps: __dd.maps.length,
+    caught: __dd.maps[0] === map, laterCaught: __dd.maps.includes(later) }));
+  process.exit(0);
+})();
+"""
+
+
+def test_a_map_made_before_a_late_install_is_found_through_its_module(tmp_path):
+    module = tmp_path / "gtmap.mjs"
+    module.write_text(GTMAP, encoding="utf-8")
+    code = LATE.replace("SCRIPT", json.dumps(BRIDGE_SCRIPT)).replace("MODULE", json.dumps(module.as_uri()))
+    out = subprocess.run(["node", "-"], input=code, capture_output=True, text=True, timeout=30, check=False)
+    assert out.returncode == 0, out.stderr
+    r = json.loads(out.stdout.splitlines()[0])
+    assert r["before"] == "no-map" and r["wrapped"]
+    assert r["result"] == "native" and r["restored"]  # the page's own call works; everything put back
+    assert r["caught"] and r["after"] == "drawn" and r["drawn"] == [2]
+    assert r["laterCaught"] and r["maps"] == 2
+
+
 def test_our_own_synthetic_destination_is_never_emitted_back():
     emitted = run()["emitted"]
     dests = [m["payload"] for m in emitted if m.get("topic") == "dune.trackedDestination"]

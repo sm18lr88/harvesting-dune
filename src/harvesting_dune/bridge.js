@@ -79,8 +79,9 @@
 
   // gtmap (the companion's map engine) assigns this._createdLayers = [] in its constructor. A setter
   // on Object.prototype sees that assignment, so we get each map instance as it is created. The
-  // property then becomes a normal own property of that object; nothing else changes.
-  if (dd.intercepting && !Object.prototype.hasOwnProperty('_createdLayers')) {
+  // property then becomes a normal own property of that object; nothing else changes. Installed into a
+  // running page, it still sees maps the page makes later (opening the map in the map window).
+  if (!Object.prototype.hasOwnProperty('_createdLayers')) {
     const kept = new WeakMap(); // only if an object refuses own properties: the map still gets its value
     Object.defineProperty(Object.prototype, '_createdLayers', {
       configurable: true,
@@ -93,6 +94,60 @@
       },
     });
   }
+  // Installed into a running page, that hook is too late for a map that already exists. gtmap's render
+  // loop asks for every frame, so a frame request's call stack names gtmap's module; import() of that
+  // already loaded module only hands it over, and it exports the map class (the one that sets
+  // _createdLayers). The next call of one of its methods shows the live map as `this`. Everything we
+  // wrap is put back as soon as the map is found.
+  const findLateMap = () => {
+    const raf = window.requestAnimationFrame;
+    if (typeof raf !== 'function') return;
+    const tried = new Set();
+    let found = false, lookedAt = 0;
+    const isMap = (m) => !!(m && m.layers && m.view && m._createdLayers);
+    const isMapClass = (v) => typeof v === 'function' && !!v.prototype && /\b_createdLayers\s*=/.test(Function.prototype.toString.call(v));
+    const unhook = () => { if (window.requestAnimationFrame === hook) window.requestAnimationFrame = raf; };
+    const watch = (proto) => {
+      const kept = [];
+      const restore = () => { for (const [k, desc, w] of kept) if (proto[k] === w) Object.defineProperty(proto, k, desc); };
+      for (const k of Object.getOwnPropertyNames(proto)) {
+        const desc = Object.getOwnPropertyDescriptor(proto, k);
+        if (k === 'constructor' || typeof desc.value !== 'function' || !desc.configurable) continue;
+        const orig = desc.value;
+        const w = function (...args) {
+          try { if (isMap(this) && !dd.maps.includes(this) && dd.maps.length < 8) { dd.maps.push(this); restore(); } } catch (err) { report('late-map', err); }
+          return orig.apply(this, args);
+        };
+        Object.defineProperty(proto, k, { ...desc, value: w });
+        kept.push([k, desc, w]);
+      }
+    };
+    const look = (stack) => {
+      for (const [, url] of String(stack).matchAll(/((?:https?|file):\/\/[^\s()]+?\.m?js)(?::\d+)+/g)) {
+        if (tried.has(url) || !url.startsWith(location.origin + '/')) continue; // only the page's own modules
+        tried.add(url);
+        import(url).then((mod) => {
+          const C = !found && Object.values(mod).find(isMapClass);
+          if (!C) return;
+          found = true;
+          unhook();
+          watch(C.prototype);
+        }).catch((err) => report('late-map', err));
+      }
+      if (tried.size >= 40) unhook();
+    };
+    const hook = function (...args) {
+      try {
+        const now = Date.now();
+        if (found || dd.maps.length) unhook(); // a map came by the constructor hook
+        else if (now - lookedAt >= 100) { lookedAt = now; look(new Error().stack); }
+      } catch (err) { report('late-map', err); }
+      return raf.apply(this, args);
+    };
+    window.requestAnimationFrame = hook;
+  };
+  if (!dd.intercepting) { try { findLateMap(); } catch (err) { report('late-map', err); } }
+
   const addListener = wv.addEventListener.bind(wv);
   if (dd.intercepting) {
     const removeListener = wv.removeEventListener ? wv.removeEventListener.bind(wv) : () => {};
