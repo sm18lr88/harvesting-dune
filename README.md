@@ -90,17 +90,20 @@ The installer installs nothing for all users of the PC.
 
 Every change on the settings page shows "Saved", or a red message that tells you why the change failed.
 
-The settings page has three parts:
+The settings page has three columns. Each choice has one place only.
 
-- **What are you looking for?** One search for everything: map resources, parts and materials, unique gear and schematics, downed ships and wrecks. Typos are fine. Pick a result to make it your target. Below the search, you can also browse everything by class.
-- **Your target:** a card shows what you search, its status, the best place and where it drops. Here you also change the vehicle, turn the recommendations on or off, set your base and block a place.
-- **Sections:** the other settings are in sections. Click a section to open it: Lines & minimap, Deep Desert, Diagnostics, Ships & wrecks, Rare loot nearby, Spice blows, Guild and Characters. A closed section shows a short summary. The page remembers which sections are open.
+- **Left column: what you look for.** One search for everything: map resources, parts and materials, unique gear and schematics, downed ships and wrecks. Typos are fine. Below the search, you can also browse everything by class. Pick a result to make it your target. This is the only place where you pick a target. Spice has one row with three buttons: **All**, **Large** and **Medium**.
+- **Middle column: your target.** A card shows what you search, its status, the best place and where it drops. Here you also change the vehicle, turn the recommendations on or off, set your base and block a place. Below the card are the sections Lines & minimap, Deep Desert and Diagnostics.
+- **Right column: around you.** The sections Ships & wrecks, Rare loot nearby, Spice blows, Guild and Characters.
+
+Click a section to open it. A closed section shows a short summary. The page remembers which sections are open. In a narrow window, the page uses two columns. The sections of the right column then go below the middle column.
 
 ### Lines on the minimap
 
-- If lines are on, the minimap shows exactly one resource. That resource is the searched resource. If you tick a different resource, the search changes to that resource.
+- If lines are on, the minimap shows exactly one resource. That resource is the searched resource. The section Lines & minimap then shows one line, for example `Minimap shows: Spice Sand`.
+- The resource tick boxes show only when lines are off, or when lines wait for you to tick exactly one resource. If you tick a different resource while lines are on, the search changes to that resource.
 - The **main line** is cyan. It goes from you to the best target.
-- Up to 4 **thin lines** go to the next best areas. For more details, read [Lines on the minimap](docs/HOW-IT-WORKS.md#lines-on-the-minimap).
+- Up to 4 **thin lines** go to the next best areas. In a spice size search (Large or Medium), the thin lines go only to fields of that size. For more details, read [Lines on the minimap](docs/HOW-IT-WORKS.md#lines-on-the-minimap).
 - The tool remembers the searched resource after a restart.
 - Your own tracked destination in the game and the Landsraad route mode always have priority.
 
@@ -153,7 +156,7 @@ Pick an item on the settings page. If someone farms it on a fixed route, a **Far
 | **Lines start in row** (Deep Desert) | Row A by default: the lines show from the entrance. Select a later row, for example E, to see the lines only when you are that many rows into the Deep Desert. Before that row, the destination marker stays and the badge shows `lines from row E`. |
 | **PvP yield ×** | 2.5 by default. If "PvP areas only" is off, PvP areas count their yield × this value. |
 | **Max distance for lines** (km) | The lines only go to areas within this straight-line distance. 0 means no limit. The hotspot cell always looks at the complete map. |
-| **Minimap shows** | The resources on the minimap. The big map does not change. Your other filter choices in the companion (caves, loot, …) stay as they are. |
+| **Minimap shows** | The resources on the minimap. The big map does not change. Your other filter choices in the companion (caves, loot, …) stay as they are. The tick boxes show only when lines are off, or when lines wait for you to tick one resource. |
 | **Extra markers** | Buried treasure is hidden unless you tick it. It is not searched and gets no lines. |
 | **Vehicle** | "auto" detects the vehicle from your motion. Select a vehicle to override the detection. |
 
@@ -189,9 +192,9 @@ What you see from the guild:
 - A list of guildmates online. Untick a guildmate to hide that guildmate on the minimap.
 - **Shared finds** on the settings page: what each find is, how old it is, and who saw it.
 
-Guild data never changes the ranking. It only draws rings and lists. A scan row is hidden only when two guildmates confirmed it as stale.
+Guild data changes the ranking only for spice. For details, read [Spice size modes](#spice-size-modes). For everything else, guild data only draws rings and lists. A scan row is hidden on the map only when two guildmates confirmed it as stale.
 
-Your own eyes always win. If you see a node live, a guild report never hides it. A node grows back after its respawn time. So a guild report hides a node only until that time has passed. Then the node shows again. A downed ship never comes back, so its report hides it until the report expires.
+Your own eyes always win. If you see a node live, a guild report never hides it. A node grows back after its respawn time. Thus, a guild report hides a node only until that time ends. Then the node shows again. A downed ship never comes back, so its report hides it until the report expires.
 
 **Pins:** a pin is a short label on the guild's minimap, like "IRON HERE". Press the pin hotkey (see Hotkeys) to drop a pin with your preset label. You can also type a label on the settings page, in the **Guild** section, and click **Drop pin**. To change the label of the pin hotkey, type it in the field after "Ctrl+Alt+P drops". The pin lands at the destination you set in the companion. With no destination, it lands where you stand. Every guildmate on the same map and layout sees a ring with your label. A pin goes away after two hours. Your own pins are listed on the settings page, and **Delete** removes one for everyone. If you hide a guildmate, you hide that guildmate's pins too. Pins never change the lines or the ranking.
 
@@ -209,9 +212,20 @@ The tool talks to the guild server only as often as it must: every 15 s while yo
 
 ### Spice size modes
 
-**Spice · Large fields** and **Spice · Medium fields** send you only to fields of that size that the tool saw as active. The tool saw them live, or remembers them for 45 min.
+**Spice · Large fields** and **Spice · Medium fields** send you only to active fields of that size. The main line and the thin lines go only to fields of that size.
 
-- If no such field is known, the tool uses scan-database rows and labels them as unconfirmed.
+At each spice site, the newest report decides if the field is active:
+
+- **Your companion:** the field is live now, or you saw it active. The tool remembers an active field for 45 min.
+- **A guildmate:** the guildmate saw the field active (guild sync). This report counts for 45 min.
+- **The gaming.tools scan database:** its rows have no time. Thus, every other report is newer.
+
+More rules:
+
+- If the newest report says that the site is empty, the site is not a target. This also applies to a scan row that a guildmate saw empty.
+- If your companion shows the site now, only your companion decides.
+- The game can report a site again under a new actor id. The new report then replaces what the tool remembered. Thus, an empty site stops being a target as soon as your companion shows it empty.
+- If no active field of that size is known, the tool uses scan-database rows and labels them as unconfirmed.
 - While you fly the scout ornithopter, the tool ranks targets by flight distance with no range limit. The field must only suit your harvester.
 - Small spice fields are never a target and never get a line.
 
@@ -230,13 +244,13 @@ On the settings page, below the search, you can browse everything by class. Each
 
 ### Parts, downed ships and wrecks
 
-Use the search **What are you looking for?** at the top of the settings page to look for a part, for example Holtzman Actuator, Mechanical Parts, Diamondine Dust or Carbide blade parts. Type a part of the name, then pick the part. Typos are fine.
+To look for a part, use the search at the top of the left column on the settings page. Examples of parts: Holtzman Actuator, Mechanical Parts, Diamondine Dust and Carbide blade parts. Type a part of the name, then pick the part. Typos are fine.
 
 - A part with the tag **ships** also drops from downed ships.
 - The card of the part has three groups: **Downed ships**, **Fixed shipwrecks** and **Containers & corpses**. Each row shows the best chance, the amount, the average amount for each source and the nearest place.
 - The lines lead to the best sources. A downed ship counts only after the game showed it to you.
 
-The section **Ships & wrecks** has three searches. Each one leads you on one trip: first to the nearest place, then on to the next nearest. The route on the map shows up to 5 stops in that order. The stop you head to stays your target unless another stop is clearly nearer (15 %).
+Three searches in the **Salvage** class lead you to ships and wrecks. Each one leads you on one trip: first to the nearest place, then on to the next nearest. The route on the map shows up to 5 stops in that order. The stop you head to stays your target unless another stop is clearly nearer (15 %).
 
 | Search | What it finds |
 |---|---|
@@ -244,12 +258,14 @@ The section **Ships & wrecks** has three searches. Each one leads you on one tri
 | **Fixed shipwrecks** | Always there: the named wrecks at fixed places, for example The Wreck of the Pallas. The tool reads them from the companion's own map. |
 | **Buggy & ornithopter wrecks** | The wrecked vehicles at fixed places that you cut for parts. The scrap heaps are not included. |
 
+The section **Ships & wrecks** lists the downed ships that you saw and the fixed shipwrecks of your map.
+
 About downed ships:
 
 - The game shows a downed ship only within approximately 0.5 to 0.9 km. When it does, the badge shows `Downed ship! 0.9 km away` for 90 s, whatever resource you search.
 - Farther away, the tool uses the downed ships that other players reported to gaming.tools (its scan database). A search for downed ships includes them, marked "not yet confirmed live". When you come close and the game shows no ship there, the tool drops it.
 - The tool remembers the ship for 30 min after you leave. This time is an estimate.
-- The tool forgets the ship when you come within 400 m and the game does not show it any more (a sandworm took it), or when you opened all its containers.
+- The tool forgets the ship in two cases. In the first case, you come within 400 m and the game does not show it any more (a sandworm took it). In the second case, you opened all its containers.
 - Downed ships are targets in PvE rows too. "PvP areas only" is about yields, not about ships.
 
 ### Unique gear and schematics (chance finds)
@@ -297,7 +313,7 @@ If you installed from this folder:
 **WARNING:** While the companion runs, any program on your PC can use the DevTools port `127.0.0.1:9231` to control the companion's pages. Other computers cannot connect to it. To remove this setting, uninstall the tool.
 
 - The tool keeps your learned data (terrain, corrections, journals) in the folder `data\`.
-- The tool sends nothing until you enter a guild key. Then it sends your character name, your server, strong sightings and, unless you turn them off, your position and your character profile (skills, stats, schematics, Landsraad, achievements and this session). It sends them only to the guild server at 158.69.179.64. The connection is HTTPS, and the tool checks the server's certificate. The key is kept in `data\settings.json`.
+- The tool sends nothing until you enter a guild key. Then it sends your character name, your server and strong sightings. Unless you turn them off, it also sends your position and your character profile (skills, stats, schematics, Landsraad, achievements and this session). It sends them only to the guild server at 158.69.179.64. The connection is HTTPS, and the tool checks the server's certificate. The key is kept in `data\settings.json`.
 - The settings page answers only `127.0.0.1` and `localhost`. It refuses changes from other websites. Thus, a web page in your browser cannot change your settings.
 
 ## Troubleshooting
