@@ -11,8 +11,10 @@ from __future__ import annotations
 import json
 import math
 import platform
+import re
 import sys
 from importlib import metadata
+from pathlib import Path
 
 from . import logsetup
 
@@ -21,14 +23,27 @@ from .loot import cage_kind
 from .store import Status
 
 RARITY = ["Common", "Uncommon", "Rare", "Epic", "Legendary", "Unique"]
+VERSION_FILE = Path(__file__).resolve().parents[2] / "version.txt"  # the release build writes it beside pyproject.toml
+VERSION = re.compile(r"[0-9A-Za-z][0-9A-Za-z.+-]{0,63}")  # also sent as an HTTP header (X-Client-Version)
+
+
+def _shipped_version() -> str | None:
+    """The build's own version: a dev build is 'x.y.z-dev.<run>' while pyproject.toml still says x.y.z."""
+    try:
+        text = VERSION_FILE.read_text("ascii").strip()
+    except (OSError, UnicodeError):
+        return None
+    return text if VERSION.fullmatch(text) else None
 
 
 def about() -> dict:
     """What a problem report needs besides the errors."""
-    try:
-        version = metadata.version("harvesting-dune")
-    except metadata.PackageNotFoundError:
-        version = "dev"
+    version = _shipped_version()
+    if version is None:
+        try:
+            version = metadata.version("harvesting-dune")
+        except metadata.PackageNotFoundError:
+            version = "dev"
     return {"version": version, "python": sys.version.split()[0], "platform": platform.platform()}
 
 
@@ -122,8 +137,8 @@ class StatusPageMixin:
         for t in self.store.items.values():
             a = t.actor
             kind = cage_kind(a.actor_type)
-            if kind is None or t.status is not Status.LIVE:
-                continue  # looted temporary cages vanish from the list
+            if kind is None or t.status is not Status.LIVE or self._emptied(a, self.clock):
+                continue  # an emptied cage can stay listed (hasLoot false); it has nothing left to show
             cage = self.loot.lookup(world[0], a.x, a.y)
             drops = cage.drops if cage else []
             special = [d for d in drops if d.get("special")]

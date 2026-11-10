@@ -1,5 +1,6 @@
 """Guild sync HTTPS front over real TLS: trust anchor, bearer keys, limits, errors, audit lines."""
 
+import email.message
 import gzip
 import json
 import socket
@@ -10,7 +11,7 @@ import urllib.request
 from pathlib import Path
 
 import pytest
-from guildsync.httpd import make_server
+from guildsync.httpd import Handler, make_server
 
 CERTS = Path(__file__).parent / "certs"
 TOKEN = "gs1_alpha001_Qm9vdHN0cmFwVGVzdEtleUFscGhhMDAx"
@@ -23,6 +24,7 @@ POLL = {"since": 0, "records": [{"cls": "spice"}]}
 class FakeStorage:
     def __init__(self) -> None:
         self.audits: list[tuple] = []
+        self.touched: list[tuple] = []
 
     def lookup_key(self, token: str) -> dict | None:
         if token == IDLE_TOKEN:
@@ -31,6 +33,9 @@ class FakeStorage:
 
     def audit(self, *row) -> None:
         self.audits.append(row)
+
+    def touch_key(self, *use) -> None:
+        self.touched.append(use)
 
 
 class FakeApi:
@@ -155,6 +160,23 @@ def test_oversized_body_is_refused_unread_and_the_socket_closes_cleanly(front):
     assert api.calls == []
 
 
+def test_a_body_that_stalls_is_408_not_500(front, monkeypatch):
+    port, api, storage = front
+    monkeypatch.setattr(Handler, "timeout", 0.5)  # the stall is the behaviour: wait less than the real 10 s
+    ctx = ssl.create_default_context(cafile=str(CERTS / "test-ca.pem"))
+    head = (f"POST /v1/sync HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {TOKEN}\r\n"
+            "Content-Type: application/json\r\nContent-Length: 100\r\n\r\n{\"")
+    with socket.create_connection(("127.0.0.1", port), timeout=10) as raw, \
+            ctx.wrap_socket(raw, server_hostname="127.0.0.1") as tls:
+        tls.sendall(head.encode())  # 2 of the 100 bytes, then silence
+        chunks = []
+        while chunk := tls.recv(4096):
+            chunks.append(chunk)
+    head, _, body = b"".join(chunks).partition(b"\r\n\r\n")
+    assert head.startswith(b"HTTP/1.0 408 ") and json.loads(body)["status"] == 408
+    assert api.calls == [] and storage.audits[-1][4] == 408
+
+
 def test_bad_json_is_400_and_an_api_crash_is_500_then_service_goes_on(front):
     port, api, _ = front
     status, _, raw = raw_post(port, b"{not json", {})
@@ -248,6 +270,21 @@ def test_gzip_both_ways_only_when_it_pays(front):
     assert status == 200 and "Content-Encoding" not in headers and json.loads(raw)["sightings"] == []  # under 1 KiB
 
 
+def test_gzip_with_q_0_is_not_acceptable(front):
+    port, api, _ = front
+    api.sightings = [{"cls": "ore", "type": "magnetiteore", "x": float(i)} for i in range(40)]
+    status, headers, raw = raw_post(port, json.dumps(POLL).encode(), {"Accept-Encoding": "gzip;q=0, identity"})
+    assert status == 200 and "Content-Encoding" not in headers and len(json.loads(raw)["sightings"]) == 40
+    assert raw_post(port, json.dumps(POLL).encode(), {"Accept-Encoding": "gzip; q=0.5"})[1]["Content-Encoding"] == "gzip"
+
+
+def test_an_accepted_data_request_counts_as_key_use(front):
+    port, _, storage = front
+    assert call(port, "/v1/data", token=TOKEN)[0] == 200
+    assert storage.touched == [("alpha001", NOW, "127.0.0.1")]
+    assert call(port, "/v1/data/nope", token=TOKEN)[0] == 404 and len(storage.touched) == 1
+
+
 def test_a_gzip_body_is_measured_after_inflating_so_a_bomb_stays_small(front):
     port, api, _ = front
     bomb = gzip.compress(b"[" + b" " * (300 * 1024) + b"]")
@@ -257,3 +294,118 @@ def test_a_gzip_body_is_measured_after_inflating_so_a_bomb_stays_small(front):
     broken = raw_post(port, b"not gzip at all", {"Content-Encoding": "gzip"})
     other = raw_post(port, json.dumps(POLL).encode(), {"Content-Encoding": "br"})
     assert (broken[0], other[0], other[1]["Accept-Encoding"]) == (400, 415, "gzip") and api.calls == []
+
+
+def _tls(port: int):
+    ctx = ssl.create_default_context(cafile=str(CERTS / "test-ca.pem"))
+    raw = socket.create_connection(("127.0.0.1", port), timeout=10)
+    return ctx.wrap_socket(raw, server_hostname="127.0.0.1")
+
+
+def _read_all(tls) -> bytes:
+    chunks = []
+    while chunk := tls.recv(4096):
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def test_a_body_trickled_in_under_the_read_timeout_is_still_408_once_the_whole_body_is_late(front, monkeypatch):
+    port, api, _ = front
+    monkeypatch.setattr(Handler, "timeout", 0.5)  # the deadline is the behaviour: wait less than the real 10 s
+    body = b'{"a": 1}  '
+    head = (f"POST /v1/sync HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {TOKEN}\r\n"
+            f"Content-Type: application/json\r\nContent-Length: {len(body)}\r\n\r\n")
+    with _tls(port) as tls:
+        tls.sendall(head.encode())
+        tls.settimeout(0.2)
+        reply = b""
+        for byte in body:  # one byte per 0.2 s: each read is quick, the whole body takes 2 s
+            tls.sendall(bytes([byte]))
+            try:  # wait up to 0.2 s for the answer; once it came, stop sending into a closing socket
+                reply = tls.recv(4096)
+                break
+            except TimeoutError:
+                continue
+        tls.settimeout(10)
+        reply += _read_all(tls)
+    assert reply.startswith(b"HTTP/1.0 408 "), reply[:40]
+    assert api.calls == []
+
+
+def test_trace_connect_and_unknown_methods_get_405_on_a_route_and_404_elsewhere(front):
+    port, api, storage = front
+    for method, path, allow in (("TRACE", "/health", "GET, HEAD"), ("CONNECT", "/v1/sync", "POST"),
+                                ("FOO", "/v1/data", "GET, HEAD")):
+        status, headers, body = call(port, path, method=method)
+        assert (status, headers["Allow"], body["status"]) == (405, allow, 405), (method, path)
+    status, _, body = call(port, "/nope", method="FOO")
+    assert (status, body["status"]) == (404, 404)
+    assert [a[3:5] for a in storage.audits] == [("TRACE /health", 405), ("CONNECT /v1/sync", 405),
+                                                ("FOO /v1/data", 405), ("FOO /nope", 404)]
+    assert api.calls == []
+
+
+def test_a_malformed_request_line_is_refused_without_logging_its_query(front, capsys):
+    port, _, _ = front
+    with _tls(port) as tls:
+        tls.sendall(f"GET /v1/data?access_token={TOKEN} extra HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n".encode())
+        reply = _read_all(tls)
+    assert reply.startswith(b"HTTP/1.0 400 ")
+    out = capsys.readouterr().out
+    assert "refused 400" in out and "Qm9vdHN0" not in out and "access_token" not in out
+
+
+def test_keyless_requests_spend_the_ip_bucket_even_when_their_body_would_be_refused(front):
+    port, api, _ = front
+    bomb = gzip.compress(b"[" + b" " * (300 * 1024) + b"]")  # 413 for a valid key, once inflated
+
+    def keyless_bomb() -> int:
+        req = urllib.request.Request(f"https://127.0.0.1:{port}/v1/sync", data=bomb,
+                                     headers={"Content-Type": "application/json", "Content-Encoding": "gzip"})
+        ctx = ssl.create_default_context(cafile=str(CERTS / "test-ca.pem"))
+        try:
+            with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
+                return resp.status
+        except urllib.error.HTTPError as err:
+            with err:
+                return err.code
+
+    assert [keyless_bomb() for _ in range(11)] == [401] * 10 + [429]  # IP_RATE: 10 a minute without a valid key
+    assert api.calls == []
+
+
+def test_a_header_too_long_to_parse_gets_431_as_problem_details(front):
+    port, api, _ = front
+    with _tls(port) as tls:
+        tls.sendall(f"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nX-Long: {'a' * 70_000}\r\n\r\n".encode())
+        reply = _read_all(tls)
+    head, _, body = reply.partition(b"\r\n\r\n")
+    assert head.startswith(b"HTTP/1.0 431 ") and b"Content-Type: application/problem+json" in head, head
+    assert json.loads(body)["status"] == 431 and api.calls == []
+
+
+def test_a_negative_content_length_gets_400_at_once(front):
+    port, api, _ = front
+    with _tls(port) as tls:
+        tls.sendall(f"POST /v1/sync HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {TOKEN}\r\n"
+                    "Content-Type: application/json\r\nContent-Length: -1\r\n\r\n".encode())
+        reply = _read_all(tls)  # the socket timeout (10 s) fails the test if the server waits for a body
+    head, _, body = reply.partition(b"\r\n\r\n")
+    assert head.startswith(b"HTTP/1.0 400 ") and b"Content-Type: application/problem+json" in head, head
+    assert json.loads(body)["field"] == "body" and api.calls == []
+
+
+def test_the_reply_after_a_body_gets_the_whole_socket_timeout_again():
+    a, b = socket.socketpair()
+    try:
+        a.settimeout(Handler.timeout)
+        h = Handler.__new__(Handler)
+        h.connection, h.rfile, h.timeout, h.close_connection = a, a.makefile("rb"), Handler.timeout, False
+        h.headers = email.message.Message()
+        h.headers["Content-Length"] = "5"
+        b.sendall(b"hello")
+        assert h._read_raw() == b"hello"
+        assert a.gettimeout() == Handler.timeout  # the reply write must not inherit what was left of the body budget
+    finally:
+        a.close()
+        b.close()

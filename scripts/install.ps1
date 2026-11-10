@@ -52,7 +52,6 @@ param(
     [string]$SyncServer = 'https://158.69.179.64:8443',
     [string]$CaFile = ''
 )
-$GuildKeyRequired = $true  # the install does not finish without a valid guild key
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 . (Join-Path $PSScriptRoot 'companion-path.ps1')
@@ -61,22 +60,18 @@ $ProgressPreference = 'SilentlyContinue'
 . (Join-Path $PSScriptRoot 'guild-key.ps1')
 
 $src = Split-Path -Parent $PSScriptRoot
-if ($FromPackage -and -not $InstallDir) { $InstallDir = Join-Path $env:LOCALAPPDATA 'Programs\harvesting-dune' }
+# Uninstall.cmd always passes -FromPackage: run from an installed copy (it holds the marker), that copy is the target
+if ($FromPackage -and -not $InstallDir) {
+    $InstallDir = if (Test-Path -LiteralPath (Join-Path $src $AppMarker)) { $src } else { Join-Path $env:LOCALAPPDATA 'Programs\harvesting-dune' }
+}
 $repo = if ($InstallDir) { Get-FullPath $InstallDir } else { Get-FullPath $src }
 if (-not $CaFile) { $CaFile = Join-Path $repo 'src\harvesting_dune\sync-ca.pem' }
 $copyApp = -not (Test-SamePath $src $repo)
 $UvSources = @($UvSources | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim().ToLowerInvariant() } | Where-Object { $_ })
 if (-not $UvDir) { $UvDir = Join-Path $env:USERPROFILE '.local\bin' }
-$taskName = 'harvesting-dune autorun'
+$taskName = $AutorunTaskName
 $doctorCmd = "powershell -ExecutionPolicy Bypass -File `"$repo\scripts\doctor.ps1`""
 $script:stoppedTask = $false
-
-function Test-TaskIsOurs {
-    $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-    if (-not $task) { return $false }
-    $watcher = Join-Path $repo 'scripts\companion-autorun.ps1'
-    return ([string]($task.Actions | Select-Object -First 1).Arguments).IndexOf($watcher, [StringComparison]::OrdinalIgnoreCase) -ge 0
-}
 
 function Stop-Running([switch]$ThisFolderOnly) {
     # -ThisFolderOnly: never stop another copy of harvesting-dune (a development folder, or a test)
@@ -116,7 +111,8 @@ function Fail([string]$reason, [string]$fix) {
     exit 1
 }
 
-$logFile = if ($LogFile) { $LogFile } else { Join-Path $repo 'data\install.log' }
+# an uninstall never creates the folder it removes: a mistyped -InstallDir must stay "not installed"
+$logFile = if ($LogFile) { $LogFile } elseif ($Uninstall) { Join-Path $env:TEMP 'harvesting-dune-uninstall.log' } else { Join-Path $repo 'data\install.log' }
 try {
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $logFile) | Out-Null
     Start-Transcript -Path $logFile -Force | Out-Null
@@ -131,7 +127,7 @@ if ($Uninstall) {
         Write-Host "harvesting-dune is not installed in $repo. Nothing to do."
         Close-Log; exit 0
     }
-    if (Test-TaskIsOurs) { Stop-Running } else { Stop-Running -ThisFolderOnly }  # another copy's autorun stays
+    if (Test-TaskIsOurs $repo) { Stop-Running } else { Stop-Running -ThisFolderOnly }  # another copy's autorun stays
     $autorun = Join-Path $repo 'scripts\install-autorun.ps1'
     if (Test-Path -LiteralPath $autorun) { & $autorun -Uninstall }
     if (Test-Path -LiteralPath (Join-Path $repo $AppMarker)) {
@@ -259,22 +255,13 @@ $ErrorActionPreference = 'Stop'
 if ($code -ne 0) { Fail 'the detector was installed but does not start.' "Delete the folder $repo\.venv and run the installer again." }
 
 Step 'Guild key'
-if ($GuildKey) {
-    if (-not (Set-PresetGuildKey $repo $GuildKey $SyncServer $CaFile)) {
-        Fail 'a valid guild key is necessary.' 'Ask your guild admin for the key. Then run the installer again.'
-    }
-} elseif ($NonInteractive -or [Console]::IsInputRedirected) {
-    if (-not (Test-GuildKeySaved $repo)) {
-        Fail 'a guild key is necessary.' 'Run Install.cmd and paste the key, or run the installer with -GuildKey <key> (or set HARVESTING_DUNE_KEY).'
-    }
-    Write-Host '      a guild key is already saved.'
-} elseif (-not (Request-GuildKey $repo $GuildKeyRequired $SyncServer $CaFile)) {
-    Fail 'a valid guild key is necessary.' 'Ask your guild admin for the key. Then run the installer again.'
-}
+$keyProblem = Invoke-GuildKeyStep $repo $GuildKey (-not ($NonInteractive -or [Console]::IsInputRedirected)) $SyncServer $CaFile
+if ($keyProblem) { Fail $keyProblem[0] $keyProblem[1] }
 
 Step 'Registering autorun (companion DevTools setting + logon task)'
 if ($NoAutorun) {
     Write-Host '      skipped (-NoAutorun). The detector does not start with the companion.'
+    Remove-OwnAutorun $repo
 } else {
     $machinePolicy = (Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments' -ErrorAction SilentlyContinue).'GT.Launcher.exe'
     if ($machinePolicy -and $machinePolicy -ne "--remote-debugging-port=$Port") {

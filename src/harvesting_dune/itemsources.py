@@ -56,13 +56,53 @@ def _add_source(kinds: dict, row: tuple, where: str, name: str, at, pose) -> dic
     return k
 
 
+def _finite(*values: object) -> bool:
+    return all(isinstance(v, (int, float)) and math.isfinite(v) for v in values)
+
+
+def _usable(row: object) -> bool:
+    """A stored (x, y, z, name, chance, min, max) row the ranking can do arithmetic on; the crawl
+    writes a missing coordinate as null (Math.round(undefined))."""
+    return isinstance(row, (list, tuple)) and len(row) == 7 and _finite(*row[:3], *row[4:])
+
+
+def _kept_item(meta: object, allowed: set[str]) -> dict | None:
+    """The item if the readers can use it (a current class, a name), with only [name, price, stock] vendor
+    rows; a hand-edited cache may hold anything."""
+    if not isinstance(meta, dict) or meta.get("group") not in allowed or not isinstance(meta.get("name"), str):
+        return None
+    sold = meta.get("sold")
+    return {**meta, "sold": [r for r in sold if _vendor_row(r)] if isinstance(sold, list) else []}
+
+
+def _vendor_row(row: object) -> bool:
+    """[name, price, stock]: the page shows the price and the stock as numbers; a vendor may list no stock."""
+    if not (isinstance(row, list) and len(row) == 3):
+        return False
+    price, stock = row[1], row[2]
+    return (_finite(price) and not isinstance(price, bool)
+            and (stock is None or (isinstance(stock, int) and not isinstance(stock, bool))))
+
+
+def _cell(x: float, y: float) -> tuple[int, int]:
+    return (round(x / MATCH_CM), round(y / MATCH_CM))
+
+
+def _place_count(rows: list[tuple]) -> int:
+    """Fixed places, not rows: the Deep Desert lists one container twice for an item."""
+    return len({(r[0], r[1], r[3]) for r in rows if not ItemSources.from_ships(r)})
+
+
 def _add_rows(by_map: dict, iid: str, drops: object) -> None:
     for row in drops if isinstance(drops, list) else []:
         if not isinstance(row, list) or len(row) < 8 or not row[0]:
             continue
         map_id, x, y, z, name, chance, lo, hi = row[:8]
-        lo, hi = sorted((lo or 1, hi or 1))
-        by_map.setdefault(map_id, {}).setdefault(iid, []).append((x, y, z, name, chance or 0.0, lo, hi))
+        stored = (x, y, z, name, chance or 0.0, lo or 1, hi or 1)
+        if not _usable(stored):
+            continue
+        lo, hi = sorted(stored[5:])
+        by_map.setdefault(map_id, {}).setdefault(iid, []).append((*stored[:5], lo, hi))
 
 
 def parse_regions(data: object) -> dict[str, str] | None:
@@ -92,6 +132,7 @@ class ItemSources:
         # map id -> item id -> [(x, y, z, source name, chance, min, max)]
         self.by_map: dict[str, dict[str, list[tuple]]] = {}
         self._layout: dict[tuple, str] = {}  # (world, seed) -> matched layout map id
+        self._cells: dict[str, set[tuple[int, int]]] = {}  # layout map id -> its source cells
         self.built: float | None = None
         self.map_names: dict[str, str] = {}  # map id -> gaming.tools' name for it
         self.region_names = dict(REGION_NAMES)  # map id prefix -> our name for it
@@ -104,7 +145,7 @@ class ItemSources:
             return
         try:
             self._set(data["built"], data["items"], data["byMap"], data.get("mapNames"))
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, AttributeError):  # AttributeError: a list where a map belongs
             log.warning("ignoring malformed %s", self.path)
 
     def ingest(self, crawl: dict) -> int:
@@ -138,10 +179,11 @@ class ItemSources:
         allowed = set(ITEM_GROUPS.values()) | {CHANCE_GROUP}
         self.map_names = ({k: v[:60] for k, v in map_names.items() if isinstance(k, str) and isinstance(v, str)}
                           if isinstance(map_names, dict) else {})
-        items = {i: m for i, m in items.items() if isinstance(m, dict) and m.get("group") in allowed}
+        items = {i: kept for i, m in items.items() if (kept := _kept_item(m, allowed))}
         by_map = {mp: {i: rows for i, rows in per.items() if i in items} for mp, per in by_map.items()}
-        self.built, self.items, self._layout = built, items, {}
-        self.by_map = {mp: {i: [tuple(r) for r in rows] for i, rows in per.items()} for mp, per in by_map.items()}
+        self.built, self.items, self._layout, self._cells = built, items, {}, {}
+        # an old cache may hold rows written before they were checked
+        self.by_map = {mp: {i: [tuple(r) for r in rows if _usable(r)] for i, rows in per.items()} for mp, per in by_map.items()}
 
     # -- resources -----------------------------------------------------------------------------
     def is_item(self, key: str | None) -> bool:
@@ -176,15 +218,19 @@ class ItemSources:
         known = self._layout.get(world)
         if known:
             return known
-        best, best_hits = None, 0
-        for m in maps:
-            points = {(round(x / MATCH_CM), round(y / MATCH_CM)) for rows in self.by_map[m].values() for x, y, *_ in rows}
-            hits = sum(1 for x, y in live_positions if (round(x / MATCH_CM), round(y / MATCH_CM)) in points)
-            if hits > best_hits:
-                best, best_hits = m, hits
-        if best is not None and best_hits >= 2:
+        live = [_cell(x, y) for x, y in live_positions]
+        (hits, best), (second, _) = sorted(((sum(c in self._layout_cells(m) for c in live), m) for m in maps), reverse=True)[:2]
+        if hits == second:
+            return None  # several layouts fit what you saw (or none does): wait for a container that decides
+        if hits - second >= 2:
             self._layout[world] = best  # settled for this Coriolis cycle
         return best
+
+    def _layout_cells(self, map_id: str) -> set[tuple[int, int]]:
+        cells = self._cells.get(map_id)
+        if cells is None:
+            cells = self._cells[map_id] = {_cell(x, y) for rows in self.by_map[map_id].values() for x, y, *_ in rows}
+        return cells
 
     def sources(self, key: str, map_id: str | None) -> list[tuple]:
         iid = item_id(key)
@@ -241,7 +287,7 @@ class ItemSources:
             top = max(rows, key=lambda r: r[4])
             region = self.region(mp)
             if region not in best or top[4] > best[region]["bestChance"]:
-                best[region] = {"region": region, "source": top[3], "bestChance": round(top[4], 4), "places": len(rows)}
+                best[region] = {"region": region, "source": top[3], "bestChance": round(top[4], 4), "places": _place_count(rows)}
         return sorted(best.values(), key=lambda b: -b["bestChance"])[:limit]
 
     # -- settings page -------------------------------------------------------------------------
@@ -250,7 +296,7 @@ class ItemSources:
         here = self.by_map.get(map_id, {}) if map_id else {}
         groups: dict[str, list] = {}
         for iid, meta in self.items.items():
-            fixed = sum(1 for r in here.get(iid, ()) if not self.from_ships(r))
+            fixed = _place_count(here.get(iid, []))
             ships = bool(self.ship_rows(PREFIX + iid, map_id, world_id))
             # [key, name, fixed places on this map, also drops from downed ships, found only by chance]
             groups.setdefault(meta["group"], []).append([PREFIX + iid, meta["name"], fixed, ships, bool(meta.get("chance"))])
@@ -267,11 +313,12 @@ class ItemSources:
         if meta is None:
             return None
         kinds: dict[str, dict] = {}
+        seen: set[tuple] = set()
         for row in self.sources(key, map_id):
             if not self.from_ships(row):
                 where, name = _place(row, wrecks)
-                _add_source(kinds, row, where, name, [(row[0], row[1])], pose).update(
-                    count=kinds[name]["count"] + 1)
+                _add_source(kinds, row, where, name, [(row[0], row[1])], pose)["count"] += (row[0], row[1], row[3]) not in seen
+                seen.add((row[0], row[1], row[3]))
         ship_rows = self.ship_rows(key, map_id, world_id)
         for row in ship_rows:  # one entry for the PvE and PvP variants
             _add_source(kinds, row, "ships", "Downed ships", ships, pose)

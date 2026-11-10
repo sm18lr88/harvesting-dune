@@ -15,8 +15,9 @@ buggy on a dune 25 m "in the air". Without flight evidence, the fastest sustaine
 in the session separates sandcrawler / buggy / sandbike: a buggy creeping around a node field
 looks like a crawler for a while, but a crawler never reaches buggy speed.
 
-Thresholds were checked against today's recorded sessions (flights show evidence within
-0-7 s of boarding; slow ground sessions show none).
+Thresholds were checked against recorded sessions: slow ground sessions show no flight
+evidence, and most flights show it within 7 s of boarding, but some only after 35 s. A flight
+first identified as a ground vehicle therefore takes back its tracks and harvester (ingest.py).
 """
 
 from __future__ import annotations
@@ -46,6 +47,8 @@ HOVER_SAMPLES = 2
 BOARDING_IGNORE_S = 2.0  # getting in moves you a few metres: not evidence of anything
 MIN_SPEED_DT_S = 0.8  # measure speed over >= 0.8 s spans: update timing jitter fakes spikes
 BOARDING_RADIUS_CM = 150000.0  # the boarding height is a ground reference within 1.5 km
+FOOT_MAX_CMS = 2500.0  # ~90 km/h: faster than anyone runs (dashes reach ~65 km/h), so a ride the session calls on foot
+CARRIED_STATES = ("passenger", "airborne", "suspending")  # character states that are not standing on the ground
 
 
 class VehicleDetector:
@@ -62,6 +65,10 @@ class VehicleDetector:
         self._motion_confirmed = False
         self.stats_hint: str | None = None
         self._last_foot: tuple[float, float, float] | None = None  # x, y, z while on foot
+        self.foot_on_ground = True  # the last foot pose stood on the ground: its height is terrain
+        self._carried = False
+        self._foot_fast = False
+        self._foot_anchor: tuple[float, float, float] | None = None  # t, x, y of the last foot speed check
         self._boarding: tuple[float, float, float] | None = None
         self._session_t0: float | None = None
         self._new_session()  # per-session state: flight evidence, hovers, cruise speeds
@@ -75,6 +82,7 @@ class VehicleDetector:
                 hint = vehicle
                 break
         changed = driving != self.driving or hint != self.name_hint
+        self._carried = any(s in low for s in CARRIED_STATES)
         if driving and not self.driving:
             self._boarding = self._last_foot
         if driving != self.driving:
@@ -86,6 +94,11 @@ class VehicleDetector:
 
     def _new_session(self) -> None:
         self._samples.clear()
+        self._foot_anchor = None  # a speed across a whole drive says nothing about the feet
+        self._harvester_before = self.last_harvester
+        # cells this session marked as driven -> their (driven_by, blocked_for) before it; ingest
+        # restores them if the session turns out to be a flight
+        self.session_cells: dict[tuple[int, int], tuple[set[str], set[str]]] = {}
         self._motion_confirmed = False
         self._pending = None
         self._session_t0 = None
@@ -93,6 +106,7 @@ class VehicleDetector:
         self._hovers = 0
         self._cruise_max = 0.0  # fastest sustained ground speed this session
         self._cruise_windows = 0
+        self._counted_t: float | None = None  # newest sample of the last counted cruise window
         self._cruise_since: float | None = None
 
     def on_stats_names(self, names: list[str]) -> bool:
@@ -110,8 +124,8 @@ class VehicleDetector:
 
     def on_pose(self, t: float, pose: Pose, ground_z: float | None) -> bool:
         if not self.driving:
-            self._last_foot = (pose.x, pose.y, pose.z)
-        if self.driving:
+            self._on_foot(t, pose)
+        else:
             if ground_z is None and self._boarding is not None:
                 bx, by, bz = self._boarding
                 if ((pose.x - bx) ** 2 + (pose.y - by) ** 2) ** 0.5 <= BOARDING_RADIUS_CM:
@@ -128,6 +142,18 @@ class VehicleDetector:
                     self._session_flying = True
         return self._update()
 
+    def _on_foot(self, t: float, pose: Pose) -> None:
+        """Whether this foot pose stands on the ground. Speed is judged over spans of at least
+        MIN_SPEED_DT_S; a shorter one keeps the last verdict."""
+        anchor = self._foot_anchor
+        if anchor is None or t - anchor[0] >= MIN_SPEED_DT_S:
+            span = t - anchor[0] if anchor is not None else 0.0
+            self._foot_fast = span > 0 and ((pose.x - anchor[1]) ** 2 + (pose.y - anchor[2]) ** 2) ** 0.5 / span > FOOT_MAX_CMS
+            self._foot_anchor = (t, pose.x, pose.y)
+        self.foot_on_ground = not (self._carried or self._foot_fast)
+        if self.foot_on_ground:
+            self._last_foot = (pose.x, pose.y, pose.z)  # never a passenger seat: boarding takes it as the ground
+
     def _flight_evidence(self) -> bool:
         """Anything a ground vehicle cannot do, judged on the newest 1 s step and recent window."""
         s = self._samples
@@ -141,6 +167,8 @@ class VehicleDetector:
                 self._hovers += 1  # straight up or down without moving across
                 if self._hovers >= HOVER_SAMPLES:
                     return True
+            else:
+                self._hovers = 0  # a hover is consecutive steps: isolated jolts never add up
         recent = [p for p in s if t1 - p[0] <= CLIMB_WINDOW_S]
         if recent and z1 - min(p[3] for p in recent) >= CLIMB_CM:
             return True  # take-off climb
@@ -152,10 +180,16 @@ class VehicleDetector:
 
     @property
     def confident(self) -> bool:
-        """True when the current vehicle is known, not just assumed from last time."""
+        """True when the vehicle to plan for is known, not just assumed from last time."""
+        return bool(self.override) or self.identified
+
+    @property
+    def identified(self) -> bool:
+        """The game or your motion says which vehicle you are in. A manual choice only says what to
+        plan for: the vehicle actually driven is still the boarding guess."""
         if self.current == "foot":
             return True
-        return bool(self.override or self.name_hint or self.stats_hint or self._motion_confirmed)
+        return bool(self.name_hint or self.stats_hint or self._motion_confirmed)
 
     @property
     def plan_vehicle(self) -> str:
@@ -207,7 +241,9 @@ class VehicleDetector:
             self._motion_confirmed = True
         else:
             cruise = self._window_cruise()
-            if cruise is not None and cruise < FLYING_MIN_CRUISE_CMS:
+            # count each distinct window once: _update also runs for dropped burst poses and other events
+            if cruise is not None and cruise < FLYING_MIN_CRUISE_CMS and self._samples[-1][0] != self._counted_t:
+                self._counted_t = self._samples[-1][0]
                 self._cruise_max = max(self._cruise_max, cruise)
                 self._cruise_windows += 1
                 if self._cruise_since is None:
@@ -224,6 +260,11 @@ class VehicleDetector:
                 self.current = self.last_vehicle
         if self.current != "foot":
             self.last_vehicle = self.current
-        if self.current in ("buggy", "sandcrawler") and self.confident:
-            self.last_harvester = self.current  # only once identified, never from a boarding guess
+        self._note_harvester()
         return self.current != before
+
+    def _note_harvester(self) -> None:
+        if self.current == "ornithopter":
+            self.last_harvester = self._harvester_before  # a flight that first looked like a ground vehicle harvests nothing
+        elif self.current in ("buggy", "sandcrawler") and self.identified:
+            self.last_harvester = self.current  # only once identified, never from a boarding guess

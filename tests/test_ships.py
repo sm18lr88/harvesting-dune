@@ -57,6 +57,19 @@ def test_a_downed_ship_is_announced_remembered_and_a_target():
     assert row["distanceM"] == 1900 and not row["loaded"] and row["zone"] == "D PvE"
 
 
+def test_a_loading_screen_keeps_the_ships_of_the_same_world():
+    det = dd_detector()
+    pose(det, SHIP_X, SHIP_Y + 90_000, t=1)
+    feed(det, 100, ship())
+    session(det, None, t=101)  # every loading screen (respawn, fast travel) reports no world for a moment
+    session(det, DD, t=102)
+    pose(det, SHIP_X, SHIP_Y + 90_000, t=103)
+    assert len(det.snapshot()["ships"]) == 1
+    session(det, None, t=104)
+    session(det, "survival_1", t=105)  # a different world forgets them
+    assert det.snapshot()["ships"] == []
+
+
 def report(det, x=SHIP_X, y=SHIP_Y):
     """A downed ship another player reported (gaming.tools scan database row)."""
     det.scan.load_rows([{"world": DD, "seed": 7, "type": "BP_SmallShipwreck_01_C", "map_marker_id": "salvagesteel",
@@ -253,3 +266,45 @@ def test_named_shipwrecks_from_the_map_data_are_targets():
     det.compute(2)
     assert det.page_state()["dest"]["x"] == -48_675.0
     assert det.snapshot()["shipwrecks"] == [{"name": "The Wreck of the Pallas", "distanceM": 103, "zone": None}]
+
+
+def test_a_seedless_step_back_into_the_same_world_keeps_its_ships():
+    det = dd_detector()
+    pose(det, SHIP_X, SHIP_Y + 90_000, t=1)
+    feed(det, 100, ship())
+    session(det, None, t=101)  # a loading screen
+    session(det, DD, seed=None, t=102)  # live (journal-20261109-080723): the map is named seconds before its seed
+    session(det, DD, t=105)
+    assert len(det.snapshot()["ships"]) == 1
+
+
+def test_a_list_tagged_with_the_seed_counts_while_the_session_names_only_the_map():
+    det = Detector(None, min_rescore_s=0)
+    session(det, DD, seed=None, t=0)
+    pose(det, SHIP_X, SHIP_Y + 90_000, t=1)
+    feed(det, 2, ship())  # tagged (map, seed 7): this world, not a leftover of the last one
+    assert len(det.snapshot()["ships"]) == 1
+
+
+def test_a_session_with_a_world_id_that_is_no_text_is_no_other_world():
+    det = dd_detector()
+    pose(det, SHIP_X, SHIP_Y + 90_000, t=1)
+    feed(det, 100, ship())
+    det.handle(BusMessage("delta", "dune.session", {"worldId": 7, "coriolisWorldSeed": 7}), 101)
+    assert len(det.snapshot()["ships"]) == 1
+
+
+def test_the_downed_ship_alert_ends_with_its_world():
+    det = dd_detector()
+    pose(det, SHIP_X, SHIP_Y + 90_000, t=1)
+    feed(det, 100, ship())
+    session(det, "survival_1", t=110)
+    assert not det.badge(now=130).startswith("Downed ship!")
+
+
+def test_a_ship_whose_three_containers_the_game_shows_emptied_is_emptied():
+    det = dd_detector()
+    xs = (SHIP_X + 3_000, SHIP_X - 3_000, SHIP_X + 9_000)
+    pose(det, SHIP_X, SHIP_Y + 6_000, t=1)  # 60 m away: further than the vanish rule reaches
+    feed(det, 2, ship(), *[{**container(f"c{i}", x, SHIP_Y), "hasLoot": False} for i, x in enumerate(xs)])
+    assert det.snapshot()["ships"][0]["emptied"]

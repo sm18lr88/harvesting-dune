@@ -27,7 +27,7 @@ log = logging.getLogger(__name__)
 
 SITE_CM = 15_000.0  # within 150 m of a stop you are at the site: its order is fixed from there
 ARRIVE_CM = 600.0  # within 6 m you came to a stop
-SAME_CM = 200.0  # a container sits exactly on its database position
+SAME_CM = 50.0  # a container sits exactly on its database position (measured: under 1 cm); route chests can be 84 cm apart
 AWAY_END_S = 600.0  # the run ends after 10 minutes outside the route's worlds
 NOTICE_S = 120.0  # "Sheol done: next ..." stays on the card this long
 UNKNOWN_RESET_S = LOOTED_HIDE_S  # no source gives a reset: the detector's own one-hour assumption
@@ -72,14 +72,20 @@ class Route:
 
     @property
     def worlds(self) -> set[str]:
-        """Maps the run may be on. Instances (testing stations, overland wrecks) are entered from Hagga Basin."""
+        """Maps the run may be on. The Deep Desert and instances (testing stations, overland wrecks) are reached
+        through Hagga Basin and the overland map."""
         own = {s.world for s in self.sites}
-        return own | ({"survival_1"} if any(not w.startswith(("survival", "deepdesert")) for w in own) else set())
+        return own | ({"survival_1", "overmap"} if any(not w.startswith("survival") for w in own) else set())
 
 
 def _num(v: object) -> float | None:
-    ok = isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
-    return float(v) if ok else None
+    if not isinstance(v, (int, float)) or isinstance(v, bool):
+        return None
+    try:
+        f = float(v)
+    except OverflowError:  # an int of hundreds of digits: JSON allows it, a float cannot hold it
+        return None
+    return f if math.isfinite(f) else None
 
 
 def _point(d: object) -> tuple[float, float, float] | None:
@@ -116,11 +122,12 @@ def parse_route(d: object) -> Route | None:
         return None
     sites = tuple(s for s in map(_site, d["sites"]) if s)
     items = d.get("items") if isinstance(d.get("items"), list) else []
+    sources = d.get("sources") if isinstance(d.get("sources"), list) else []
     if not sites:
         return None
     return Route(d["id"], str(d.get("name") or d["id"]), tuple(i for i in items if isinstance(i, str)), sites,
                  _num(d.get("resetS")), str(d.get("confidence") or "unknown"), str(d.get("note") or ""),
-                 tuple(s for s in d.get("sources") or [] if isinstance(s, str)))
+                 tuple(s for s in sources if isinstance(s, str)))
 
 
 def parse_routes(data: object) -> list[Route]:
@@ -197,6 +204,8 @@ class FarmRun:
     notice: tuple[float, str] | None = None
     world_id: str | None = None
     away_since: float | None = None
+    repeat_wait: bool = False
+    seeds: dict[str, object] = field(default_factory=dict)  # map id -> last Coriolis seed seen on it
 
     @classmethod
     def start(cls, route: Route, resolve, done_times: DoneTimes, world_id: str | None, pose) -> FarmRun:
@@ -229,13 +238,20 @@ class FarmRun:
     def signature(self) -> tuple:
         return self.phase, self.pos, self.next_index, len(self.done), self.notice
 
-    def update(self, world_id: str | None, pose, now: float) -> bool:
+    def update(self, world: tuple | None, pose, now: float) -> bool:
+        """`world` is (map id, Coriolis seed)."""
         before = self.signature()
+        world_id, seed = world if world else (None, None)
+        # a session message can name the map before its seed (after a loading screen): no seed is not a new one
+        if world_id is not None and seed is not None and self.seeds.setdefault(world_id, seed) != seed:
+            self.seeds[world_id] = seed
+            if world_id == self.site.world:  # a new layout: last week's positions mean nothing here
+                self._enter_site(keep_order=False)
         self.world_id = world_id
         self.away_since = None if world_id in self.route.worlds else self.away_since or now
         if self.wait_until is not None:
             if now >= self.wait_until:
-                self.wait_until = None
+                self.wait_until, self.repeat_wait = None, False
                 self._enter_site(keep_order=self.repeat)
         elif world_id == self.site.world and pose is not None:
             self._walk((pose.x, pose.y), now)
@@ -262,38 +278,60 @@ class FarmRun:
 
     def looted(self, x: float, y: float, now: float) -> bool:
         """The companion shows the container at (x, y) emptied: its stop counts once you came within 6 m."""
-        hit = {i for i, s in enumerate(self.stops) if _dist((s.x, s.y), (x, y)) <= SAME_CM} - self.emptied
-        self.emptied |= hit
+        i = self._stop_at(x, y)
+        if i is None or i in self.emptied:
+            return False
+        self.emptied.add(i)
         before = len(self.done)
-        if hit and self.order is not None:
+        if self.order is not None:
             self._settle(now)
         return len(self.done) != before
 
+    def refilled(self, x: float, y: float) -> None:
+        """The companion shows loot in the container at (x, y) again: its stop is no longer emptied, unless done."""
+        i = self._stop_at(x, y)
+        if i is not None and i not in self.done:
+            self.emptied.discard(i)
+
+    def _stop_at(self, x: float, y: float) -> int | None:
+        """The one stop a container at (x, y) belongs to: the nearest within SAME_CM, so a neighbour chest stays open."""
+        near = min(range(len(self.stops)), key=lambda i: _dist((self.stops[i].x, self.stops[i].y), (x, y)), default=None)
+        return near if near is not None and _dist((self.stops[near].x, self.stops[near].y), (x, y)) <= SAME_CM else None
+
     def skip(self, now: float) -> bool:
         nxt = self.next_index
+        if self.order is None and self.wait_until is None:  # no stop order (no stops known yet): skip the site
+            self._finish_site(now)
+            return True
         if nxt is None:
             return False
         self.done.add(nxt)
         self._settle(now)
         return True
 
-    def toggle_repeat(self) -> None:
+    def toggle_repeat(self, now: float) -> None:
         self.repeat = not self.repeat
+        if not self.repeat and self.repeat_wait:
+            self.wait_until, self.repeat_wait = None, False
+            self._next_site(now, self.site)
 
     def _settle(self, now: float) -> None:
         for i in (self.visited & self.emptied) - self.done:
             self.done_times.mark(self.stops[i].key, now)
             self.done.add(i)
-        if self.order is not None and self.next_index is None:
+        if self.order is not None and self.next_index is None and self.wait_until is None:  # finished once only
             self._finish_site(now)
 
     def _finish_site(self, now: float) -> None:
         done_site = self.site
         self.site_done_at[self.site_order[self.pos]] = now
         if self.repeat:
-            self.wait_until = now + self.reset_s
+            self.wait_until, self.repeat_wait = now + self.reset_s, True
             self.notice = (now, f"{done_site.name} done: repeat here in {round(self.reset_s / 60)} min")
             return
+        self._next_site(now, done_site)
+
+    def _next_site(self, now: float, done_site: Site) -> None:
         ready = [p for p in range(len(self.site_order)) if now - self.site_done_at.get(self.site_order[p], -math.inf) >= self.reset_s]
         later = [p for p in ready if p > self.pos]
         self.pos = (later or ready or [min(range(len(self.site_order)), key=lambda p: self.site_done_at[self.site_order[p]])])[0]
@@ -303,8 +341,7 @@ class FarmRun:
         far = f" ({_dist(done_site.center[:2], nxt.center[:2]) / 100_000:.1f} km)" if done_site.center and nxt.center and nxt.world == done_site.world else ""
         reset = f"repeat here in {round(self.reset_s / 60)} min" if self.route.reset_s else "reset time unknown"
         self.notice = (now, f"{done_site.name} done: next {nxt.name}{far} / {reset}")
-        if self.wait_until is None:
-            self._enter_site(keep_order=False)
+        self._enter_site(keep_order=False)  # also while waiting: the old site's order must not outlive the move
 
     def _enter_site(self, keep_order: bool) -> None:
         if not keep_order:

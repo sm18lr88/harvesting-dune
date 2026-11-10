@@ -53,6 +53,10 @@ class DataCache:
     def etag(self, name: str) -> str | None:
         return self.index["etags"].get(name)
 
+    def forget(self, name: str) -> None:
+        """Drop the ETag of a cached copy the detector refused, so the next check fetches it whole."""
+        self.index["etags"].pop(name, None)
+
     def checked_at(self, key: str | None) -> float | None:
         """When this key was last accepted, from the file; None for another key."""
         return self.index["checkedAt"] if key and self.index["keyId"] == key_id(key) else None

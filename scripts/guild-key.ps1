@@ -22,15 +22,12 @@ function Read-Secret([string]$prompt) {
     finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) }
 }
 
-function Save-GuildKey([string]$repo, [string]$key) {
-    # 0 saved, 3 not a guild key, anything else: the helper failed
+function Invoke-KeyHelper([string]$repo, [string]$key, [string]$code) {
+    # runs $code with the key on stdin; 0 done, 3 not a guild key, anything else: the helper failed
     $ErrorActionPreference = 'Continue'
     $python = Join-Path $repo '.venv\Scripts\python.exe'
     # bytes, ASCII only: with a UTF-8 console, the pipe puts a byte order mark before the key
-    $code = 'import sys; from pathlib import Path; from harvesting_dune.app import Detector; ' +
-        'key = sys.stdin.buffer.readline().decode(''ascii'', ''ignore'').strip(); ' +
-        'det = Detector(None, data_dir=Path(sys.argv[1])); ' +
-        'sys.exit(0 if det.set_sync_key(key) else 3)'
+    $code = 'import sys; key = sys.stdin.buffer.readline().decode(''ascii'', ''ignore'').strip(); ' + $code
     $out = $key | & $python -I -c $code (Join-Path $repo 'data') 2>&1
     $exit = $LASTEXITCODE
     if ($exit -ne 0 -and $exit -ne 3) {
@@ -38,6 +35,19 @@ function Save-GuildKey([string]$repo, [string]$key) {
             ForEach-Object { Write-Host "      $_" }
     }
     return $exit
+}
+
+function Test-GuildKeyFormat([string]$repo, [string]$key) {
+    # before the server check: the server answers 401 to a mistyped key as to a revoked one
+    return Invoke-KeyHelper $repo $key 'from harvesting_dune.settings import KEY_RE; sys.exit(0 if KEY_RE.fullmatch(key) else 3)'
+}
+
+function Save-GuildKey([string]$repo, [string]$key) {
+    # set_sync_key returns True even when settings.json could not be written: read the file back (4)
+    return Invoke-KeyHelper $repo $key ('from pathlib import Path; from harvesting_dune.app import Detector; ' +
+        'from harvesting_dune.fsutil import read_json; det = Detector(None, data_dir=Path(sys.argv[1])); ' +
+        'ok = det.set_sync_key(key); ' +
+        'sys.exit(3 if not ok else 0 if read_json(det.settings_path, dict, {}).get(''syncKey'') == key else 4)')
 }
 
 function Test-GuildKeyOnServer([string]$key, [string]$server, [string]$caFile) {
@@ -67,6 +77,9 @@ function Test-GuildKeyOnServer([string]$key, [string]$server, [string]$caFile) {
 
 function Use-GuildKey([string]$repo, [string]$key, [string]$server, [string]$caFile) {
     # 'saved', 'rejected', 'not-a-key' or 'failed'. Nothing is saved unless the server accepts the key or cannot be reached.
+    $format = Test-GuildKeyFormat $repo $key
+    if ($format -eq 3) { return 'not-a-key' }
+    if ($format -ne 0) { return 'failed' }
     $check = Test-GuildKeyOnServer $key $server $caFile
     if ($check -eq 'rejected') { return 'rejected' }
     $result = Save-GuildKey $repo $key
@@ -104,8 +117,9 @@ function Request-GuildKey([string]$repo, [bool]$required, [string]$server, [stri
             Write-Host '      That is not a guild key. A guild key starts with gs1_. Copy it again, and paste it.' -ForegroundColor Yellow
             continue
         }
+        if ($required) { Write-Host '      The key was not saved. The reason is above.' -ForegroundColor Yellow; return $false }
         Write-Host '      The key was not saved. Add it later on the settings page.' -ForegroundColor Yellow
-        return (-not $required)
+        return $true
     }
     return $false
 }
@@ -115,6 +129,21 @@ function Set-PresetGuildKey([string]$repo, [string]$key, [string]$server, [strin
     $outcome = Use-GuildKey $repo $key.Trim() $server $caFile
     if ($outcome -eq 'rejected') { Write-Host '      key rejected or expired: ask your guild admin' -ForegroundColor Yellow }
     if ($outcome -eq 'not-a-key') { Write-Host '      That is not a guild key. A guild key starts with gs1_.' -ForegroundColor Yellow }
-    if ($outcome -eq 'failed') { Write-Host '      The key was not saved. Add it later on the settings page.' -ForegroundColor Yellow }
+    if ($outcome -eq 'failed') { Write-Host '      The key was not saved. The reason is above.' -ForegroundColor Yellow }
     return ($outcome -eq 'saved')
+}
+
+function Invoke-GuildKeyStep([string]$repo, [string]$presetKey, [bool]$interactive, [string]$server, [string]$caFile) {
+    # the install never finishes without a guild key: returns (reason, fix) when it must stop, nothing when a key is saved
+    $askAdmin = 'Ask your guild admin for the key. Then run the installer again.'
+    if ($presetKey) {
+        if (Set-PresetGuildKey $repo $presetKey $server $caFile) { return }
+        return @('a valid guild key is necessary.', $askAdmin)
+    }
+    if (-not $interactive) {
+        if (Test-GuildKeySaved $repo) { Write-Host '      a guild key is already saved.'; return }
+        return @('a guild key is necessary.', 'Run Install.cmd and paste the key, or run the installer with -GuildKey <key> (or set HARVESTING_DUNE_KEY).')
+    }
+    if (Request-GuildKey $repo $true $server $caFile) { return }
+    return @('a valid guild key is necessary.', $askAdmin)
 }

@@ -21,6 +21,10 @@ _ACTIVE_REGULAR = (f"role = 'regular' AND revoked_at IS NULL AND expired_at IS N
 _IDLE_REGULAR = f"role = 'regular' AND revoked_at IS NULL AND expired_at IS NULL AND ? - {_IDLE_SINCE} > {KEY_IDLE_S}"
 
 
+class KeyRevoked(Exception):
+    """The key was revoked after the request's key check, before its write; nothing was written."""
+
+
 class KeyCapFull(Exception):
     def __init__(self, active: int) -> None:
         super().__init__(active)
@@ -85,11 +89,17 @@ class KeyStoreMixin:
         if split is None:
             return None
         key_id, secret = split
-        row = self._conn.execute(f"SELECT {_KEY_COLS}, secret_hash FROM keys WHERE id = ?", (key_id,)).fetchone()
+        with self._lock:  # every request thread shares the connection; reads take the write lock too
+            row = self._conn.execute(f"SELECT {_KEY_COLS}, secret_hash FROM keys WHERE id = ?", (key_id,)).fetchone()
         stored = row["secret_hash"] if row is not None else _UNKNOWN_KEY_HASH
         if not hmac.compare_digest(digest(secret), stored) or row is None or row["revoked_at"] is not None:
             return None
         return {**{k: row[k] for k in _KEY_COLS.split(", ")}, "state": key_state(row, self.clock())}
+
+    def revoked_since_check(self, c, key_id: str) -> bool:
+        """Asked inside a write: keysctl may have revoked the key after the request's key check."""
+        row = c.execute("SELECT revoked_at FROM keys WHERE id = ?", (key_id,)).fetchone()
+        return row is not None and row["revoked_at"] is not None
 
     def touch_key(self, key_id: str, now: float, ip: str) -> None:
         with self._tx() as c:

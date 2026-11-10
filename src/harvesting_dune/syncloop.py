@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -52,6 +53,8 @@ class Pace:
     full: bool = False  # the last upload hit the record cap: more is waiting
     forced: bool = False  # a wake-up or a cut reply: sync on the next pass
     promised: float = math.inf  # the nextS the last good sync promised the server
+    cursor_at: dict | None = None  # the partition det.peers.since covers: rows are filtered per partition, the rev is not
+    newest: int = 0  # the newest cursor a good reply gave (one server-wide rev): what a goodbye asks from
 
 
 def _nothing() -> None:
@@ -98,8 +101,8 @@ def _promise(det, pace: Pace, sent: list[dict]) -> float:
     return FAST_S if moving or len(sent) >= MAX_RECORDS or det.peers.outbox or det.objects_upload() else CALM_S
 
 
-def _leaving(det, bye: dict) -> dict:
-    return {"since": det.peers.since, "sentAt": time.time(), "identity": bye["identity"], "partition": bye["partition"],
+def _leaving(bye: dict, since: int) -> dict:
+    return {"since": since, "sentAt": time.time(), "identity": bye["identity"], "partition": bye["partition"],
             "position": None, "records": [], "presence": {"nextS": int(CALM_S), "inGame": False, "leaving": True}}
 
 
@@ -136,16 +139,41 @@ def _objects_refusal(exc: SyncServerError) -> bool:
     return exc.status == 400 and len(parts) == 2 and parts[1].startswith("objects")
 
 
+def _record_refusal(exc: SyncServerError) -> int | None:
+    """n of a 400 whose problem names a field under `records[n]`."""
+    parts = exc.note.split(" ")
+    found = re.match(r"records\[(\d+)\]", parts[1]) if exc.status == 400 and len(parts) == 2 else None
+    return int(found[1]) if found else None
+
+
+async def _pause(det, key: str, seconds: float, wake: asyncio.Event) -> float:
+    """A failure pause or a Retry-After wait, kept whole through wake-ups: only a new key, or a switch
+    that stops syncing, ends it early. Returns the seconds waited."""
+    waited = 0.0
+    while waited < seconds:
+        waited += (await nap(seconds - waited, wake))[0]
+        if det.sync_key != key or not _usable(det, key):
+            break
+    return waited
+
+
 async def _exchange(det, client: SyncClient, key: str, body: dict, pace: Pace) -> dict | None:
-    """The sync request; None when the server refused only the staged objects: they are dropped with a
-    note and the sync goes again at once without them, so presence and finds never wait on a pin."""
+    """The sync request; None when the server refused only one staged record or the staged objects:
+    they are dropped with a note and the sync goes again at once without them, so presence and finds
+    never wait on one bad value (the same body would be refused forever)."""
     try:
         return await asyncio.to_thread(client.exchange, key, body)
     except SyncServerError as exc:
-        if "objects" not in body or not _objects_refusal(exc):
+        bad = _record_refusal(exc)
+        if bad is not None and bad < len(body["records"]):
+            logsetup.limited(log, "sync:records", "guild server refused a staged record (%s); it is dropped", exc.note,
+                             level=logging.WARNING)
+            client.ack([body["records"][bad]])  # out of pending, like an accepted one
+        elif "objects" in body and _objects_refusal(exc):
+            logsetup.limited(log, "sync:objects", "guild server refused the staged objects (%s)", exc.note, level=logging.WARNING)
+            det.objects_refused(exc.note)
+        else:
             raise
-        logsetup.limited(log, "sync:objects", "guild server refused the staged objects (%s)", exc.note, level=logging.WARNING)
-        det.objects_refused(exc.note)
     pace.forced = True
     return None
 
@@ -158,19 +186,26 @@ async def _sync(det, client: SyncClient, key: str, pace: Pace) -> bool:
         return False
     sent = client.stage(body["records"], (body["identity"]["characterId"], body["partition"]))
     promise = _promise(det, pace, sent)
-    body.update(records=sent, since=det.peers.since, sentAt=now,
+    since = det.peers.since if body["partition"] == pace.cursor_at else 0  # a place not synced yet: all of its finds
+    body.update(records=sent, since=since, sentAt=now,
                 presence={"nextS": int(promise), "inGame": _in_world(det), "leaving": False})
     uploads = det.objects_upload()
     if uploads:
         body["objects"] = uploads
+    epoch = det.peers.epoch
     resp = await _exchange(det, client, key, body, pace)
     if resp is None:
+        return False
+    if det.sync_key != key or det.peers.epoch != epoch:  # another key, or the identity ended, while we waited
+        client.ack(sent)  # the server took them; never re-send them under the new key or identity
+        pace.forced = True
         return False
     det.key_checked(time.time())
     pace.promised = promise
     client.ack(sent)
     det.objects_sent(uploads)
     det.ingest_peer(resp, time.time())
+    _keep_cursor(det, pace, body)
     det.peers.last_error, det.peers.connected_as = None, body["identity"]["characterName"]
     pose = det.store.pose
     rows, objs = resp.get("sightings"), resp.get("objects")
@@ -178,6 +213,16 @@ async def _sync(det, client: SyncClient, key: str, pace: Pace) -> bool:
     pace.full = len(sent) >= MAX_RECORDS
     pace.forced = (isinstance(rows, list) and len(rows) >= SIGHTINGS_PAGE) or (isinstance(objs, list) and len(objs) >= OBJECTS_PAGE)
     return True
+
+
+def _keep_cursor(det, pace: Pace, body: dict) -> None:
+    """ingest_peer places rows by where the player is now: rows it could not place (a loading screen's
+    heartbeat for the last place) are asked for again from the same cursor."""
+    pace.newest = max(pace.newest, det.peers.since)
+    if det.partition() == body["partition"]:
+        pace.cursor_at = body["partition"]
+    else:
+        det.peers.since = body["since"]
 
 
 def _send_quietly(client: SyncClient, key: str, body: dict) -> None:
@@ -192,7 +237,8 @@ async def _farewell(det, client: SyncClient, pace: Pace) -> None:
     bye, det.peers.farewell = det.peers.farewell, None
     if bye is None:
         return
-    await asyncio.to_thread(_send_quietly, client, bye["key"], _leaving(det, bye))
+    # the identity's end or the key change reset the cursor after queueing: from 0 the reply would be a full page, thrown away
+    await asyncio.to_thread(_send_quietly, client, bye["key"], _leaving(bye, max(det.peers.since, pace.newest)))
     pace.forced = True
 
 
@@ -204,7 +250,7 @@ def goodbye(det, client: SyncClient) -> None:
     bye, det.peers.farewell = det.peers.farewell, None
     if bye is None:
         return
-    sender = threading.Thread(target=_send_quietly, args=(client, bye["key"], _leaving(det, bye)), name="guild goodbye", daemon=True)
+    sender = threading.Thread(target=_send_quietly, args=(client, bye["key"], _leaving(bye, det.peers.since)), name="guild goodbye", daemon=True)
     sender.start()
     sender.join(GOODBYE_S)
 
@@ -214,6 +260,8 @@ async def _profile_call(det, client: SyncClient, key: str, body: dict, path: str
     profiles), so a refusal never slows the syncs down with backoff."""
     try:
         resp = await asyncio.to_thread(client.exchange, key, body, path)
+        if det.sync_key != key:
+            return {}  # an answer for a key the player replaced while we waited
         det.key_checked(time.time())
         return resp
     except SyncServerError as exc:
@@ -223,15 +271,26 @@ async def _profile_call(det, client: SyncClient, key: str, body: dict, path: str
         return {}
 
 
+def _upload_current(det, key: str, epoch: int, upload: dict) -> bool:
+    """The profile upload still speaks for this key, identity and sharing choice; a switch while it was
+    in flight leaves the next upload due at once."""
+    return det.sync_key == key and det.peers.epoch == epoch and (upload["profile"] is not None) == det.share_character
+
+
 async def _profiles(det, client: SyncClient, key: str) -> bool:
     """Our profile when it changed (at most every 5 min), guildmates' while the Characters view is open."""
-    now = time.time()
+    if det.sync_key != key:  # replaced during this pass's sync: nothing more goes out under the old key
+        return False
+    now, epoch = time.time(), det.peers.epoch
     upload, ask = det.profile_upload(now), det.profiles_request(now)
     if upload is not None:
         await _profile_call(det, client, key, upload, "/v1/profile")
-        det.profile_sent(upload, now)  # a refused profile waits until it changes
+        if _upload_current(det, key, epoch, upload):
+            det.profile_sent(upload, now)  # a refused profile waits until it changes
     if ask is not None:
-        det.ingest_profiles(await _profile_call(det, client, key, ask, "/v1/profiles"), time.time())
+        found = await _profile_call(det, client, key, ask, "/v1/profiles")
+        if det.peers.epoch == epoch:  # another character's battlegroup: not the guild we asked about
+            det.ingest_profiles(found, time.time())
     return upload is not None or ask is not None
 
 
@@ -256,7 +315,7 @@ async def poll(det, client: SyncClient) -> None:
             except SyncError as exc:
                 wait, failures = _failed(det, key, exc, failures)
                 if wait:
-                    pace.since_s += (await nap(wait, wake))[0]
+                    pace.since_s += await _pause(det, key, wait, wake)
                 continue
             if talked:
                 failures = 0

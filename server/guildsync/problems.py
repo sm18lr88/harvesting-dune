@@ -19,7 +19,7 @@ TYPES = {  # kind -> (title, v1 `error` text); the type URI is BASE + kind
     "object-cap": ("Too many live objects", "bad request"),
 }
 ERRORS = {  # v1 `error` text of the about:blank refusals
-    401: "invalid key", 404: "not found", 405: "method not allowed", 413: "body too large",
+    401: "invalid key", 404: "not found", 405: "method not allowed", 408: "request timeout", 413: "body too large",
     415: "unsupported media type",
 }
 
@@ -43,4 +43,5 @@ def invalid(field: str, detail: str | None = None) -> dict:
 
 OTHER_KEY = problem(403, "character-owned", "Another key already writes for this character.")
 BAD_KEY = problem(401, "invalid-key", "The key is missing, unknown or revoked.")
+CHALLENGE = {"WWW-Authenticate": 'Bearer realm="guildsync"'}  # sent with every 401
 EXPIRED_KEY = problem(401, "key-expired", "The key was not used for 30 days. Ask the admin to renew it.")

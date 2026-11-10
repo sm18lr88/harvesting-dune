@@ -1,13 +1,22 @@
 """End to end: two fake companion pages over DevTools -> hub -> detector -> pushes back to both pages."""
 
 import asyncio
+import ctypes
+import gc
+import http.client
 import json
+import logging
+import time
 
+import pytest
 import websockets
-from helpers import CELL_CM, ore
+from helpers import CELL_CM, ore, session
+from test_lifecycle import priority_class
 
 from harvesting_dune.app import Detector
-from harvesting_dune.feed import BINDING, CompanionHub
+from harvesting_dune import feed, hotkeys
+from harvesting_dune.feed import BINDING, CompanionHub, Page
+from harvesting_dune.governor import Governor
 from harvesting_dune.runner import Runner
 from harvesting_dune.sync import SyncClient
 
@@ -131,6 +140,10 @@ def test_live_pipeline_drives_both_companion_pages(tmp_path, monkeypatch):
         raise AssertionError("no guild key: the sync loop must not call the server")
 
     monkeypatch.setattr(SyncClient, "exchange", no_network)
+    registered, priority = [], priority_class()
+    monkeypatch.setattr(ctypes.windll.user32, "RegisterHotKey", lambda *a: registered.append(a[1]) or 0)
+    monkeypatch.setattr(hotkeys, "start", lambda *_: None)  # Ctrl+Alt hotkeys are global: they belong to this desktop
+    monkeypatch.setattr(Governor, "start", lambda self: None)  # its process policy would stay on pytest and every child
 
     async def scenario():
         activity = asyncio.Event()
@@ -171,3 +184,228 @@ def test_live_pipeline_drives_both_companion_pages(tmp_path, monkeypatch):
                 s.close()
 
     asyncio.run(scenario())
+    assert registered == [] and priority_class() == priority  # this desktop's hotkeys and the test process stay as they were
+
+
+async def _call_page(answer):
+    """One evaluate on a real Page whose DevTools socket replies to the call through `answer(ws, request)`."""
+    async def handler(ws):
+        await answer(ws, json.loads(await ws.recv()))
+
+    server = await websockets.serve(handler, "127.0.0.1", 0)
+    ws = await websockets.connect(f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/")
+    page = Page({"id": "p", "url": "https://app.gaming.tools/dune"}, ws, asyncio.Queue())
+    try:
+        return await page.evaluate("1 + 1")
+    finally:
+        await page.close()
+        server.close()
+
+
+def test_a_page_closing_mid_call_fails_the_call_instead_of_cancelling_the_callers_loop():
+    async def close(ws, _req):
+        await ws.close()
+
+    with pytest.raises(ConnectionError):  # a CancelledError here would end a supervised loop for good
+        asyncio.run(_call_page(close))
+
+
+def test_a_devtools_error_answer_raises_instead_of_reading_as_none():
+    async def error(ws, req):
+        await ws.send(json.dumps({"id": req["id"], "error": {"code": -32000, "message": "Execution context was destroyed."}}))
+
+    with pytest.raises(RuntimeError, match="Execution context was destroyed"):
+        asyncio.run(_call_page(error))
+
+
+def test_a_half_answer_from_the_devtools_port_counts_as_unreachable(monkeypatch):
+    async def scenario():
+        loop, polled, calls = asyncio.get_running_loop(), asyncio.Event(), []
+
+        def half_answer(_port):
+            calls.append(1)
+            if len(calls) == 2:
+                loop.call_soon_threadsafe(polled.set)
+            raise http.client.IncompleteRead(b"[", 10)
+
+        monkeypatch.setattr(feed, "list_targets", half_answer)
+        hub = CompanionHub(1, poll_s=0)
+        task = asyncio.create_task(hub.maintain())
+        waiter = asyncio.create_task(polled.wait())
+        try:
+            await asyncio.wait({task, waiter}, timeout=15, return_when=asyncio.FIRST_COMPLETED)
+            assert waiter.done(), task.exception() if task.done() else "no second poll"
+            assert hub._failing_since is not None
+        finally:
+            for t in (task, waiter):
+                t.cancel()
+            await asyncio.gather(task, waiter, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
+class PingPage(StubPage):
+    """A StubPage whose ping is answered by `answer()`; `pinged` is set on every ping, `refilled` on a
+    state push after a ping."""
+
+    def __init__(self, pid: str, url: str, answer) -> None:
+        super().__init__(pid, url)
+        self.answer, self.pinged, self.refilled = answer, asyncio.Event(), asyncio.Event()
+
+    async def evaluate(self, expr: str, **kw) -> str:
+        if "ping()" in expr:
+            self.evaluated.append("ping")
+            self.pinged.set()
+            return self.answer()
+        value = await super().evaluate(expr, **kw)
+        if "ping" in self.evaluated and self.evaluated[-1] == "set":
+            self.refilled.set()
+        return value
+
+
+async def _tick_until(runner: Runner, event: asyncio.Event) -> None:
+    task = asyncio.create_task(runner.tick())
+    try:
+        await asyncio.wait_for(event.wait(), 15)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+def test_one_page_failing_its_ping_still_pings_and_refills_the_others(tmp_path, caplog):
+    def broken():
+        raise TimeoutError
+
+    async def scenario():
+        runner = Runner(Detector(None, data_dir=tmp_path, min_rescore_s=0), CompanionHub(1))
+        bad = PingPage("b", "https://app.gaming.tools/dune", broken)
+        lost = PingPage("m", "https://app.gaming.tools/dune/minimap", lambda: "none")  # reloaded: lost our state
+        runner.hub.pages = {"b": bad, "m": lost}
+        await _tick_until(runner, lost.refilled)  # the refill comes after the ping, not with it
+        return lost.evaluated
+
+    with caplog.at_level(logging.WARNING, logger="harvesting_dune"):
+        evaluated = asyncio.run(scenario())
+    assert "set" in evaluated[evaluated.index("ping"):]
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]  # a routine reload is no problem notice
+
+
+def test_a_closed_gate_keeps_the_scan_layer_reload_pending(tmp_path):
+    async def scenario():
+        det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+        det.gate_required = True  # no key: the gate stays closed
+        det.scan._restored = True  # confirmed-stale rows from a past run still wait for a reload
+        assert det.scan_refresh_due(time.time()) and not det.gate_open()
+        runner = Runner(det, CompanionHub(1))
+        page = PingPage("m", "https://app.gaming.tools/dune/minimap", lambda: "ok")
+        runner.hub.pages = {"m": page}
+        await _tick_until(runner, page.pinged)  # the ping comes after the scan refresh in a tick
+        return page.evaluated, det.scan_refresh_due(time.time())
+
+    evaluated, due = asyncio.run(scenario())
+    assert "refreshScan" not in evaluated and due  # reloaded once the gate opens, not used up now
+
+
+class ScanPage(PingPage):
+    """A PingPage whose scan-layer reload is answered by `scan()`."""
+
+    def __init__(self, pid: str, url: str, scan) -> None:
+        super().__init__(pid, url, lambda: "ok")
+        self.scan = scan
+
+    async def evaluate(self, expr: str, **kw) -> str:
+        if "refreshScan()" in expr:
+            self.evaluated.append("refreshScan")
+            return self.scan()
+        return await super().evaluate(expr, **kw)
+
+
+def test_a_scan_layer_reload_no_page_carried_out_stays_pending(tmp_path):
+    async def scenario():
+        det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+        det.scan._restored = True  # confirmed-stale rows from a past run still wait for a reload
+        runner = Runner(det, CompanionHub(1))
+        page = ScanPage("m", "https://app.gaming.tools/dune/minimap", lambda: "no-session")
+        runner.hub.pages = {"m": page}
+        await _tick_until(runner, page.pinged)  # the ping comes after the scan refresh in a tick
+        return page.evaluated, det.scan.refresh_pending
+
+    evaluated, pending = asyncio.run(scenario())
+    assert "refreshScan" in evaluated and pending
+
+
+def test_a_reloaded_page_reloads_its_scan_layer_so_removed_rows_stay_gone(tmp_path):
+    det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+    session(det, "DD")
+    det.load_scan([{"type": "MagnetiteOre", "map_marker_id": "magnetiteore", "x": 1000, "y": 0, "z": 0}], 200, 0)
+    assert det.scan.mark_mined("magnetiteore", 1000, 0, 0, 3600)
+    det.scan_refreshed(0)  # every page's scan layer was reloaded without the row
+    runner = Runner(det, CompanionHub(1))
+    page = StubPage("b", "https://app.gaming.tools/dune")
+    asyncio.run(runner._push_page(page))  # the page reloaded (its ping answered 'empty') and fetched every row
+    assert "refreshScan" in page.evaluated[page.evaluated.index("set") + 1:]
+
+
+def test_a_clean_exit_takes_the_picker_out_of_the_map_window(tmp_path, monkeypatch):
+    monkeypatch.setattr(hotkeys, "start", lambda *_: None)
+
+    async def idle():
+        await asyncio.Event().wait()
+
+    async def scenario():
+        det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+        hub = CompanionHub(1)
+        runner = Runner(det, hub, exit_when_gone_s=1)
+        runner.governor.start = lambda: None
+        for name in ("consume", "tick", "refresh_scan", "refresh_loot_index", "sync_loop", "data_loop"):
+            setattr(runner, name, idle)
+        hub.maintain = idle
+        big = StubPage("b", "https://app.gaming.tools/dune")
+        hub.pages = {"b": big}
+        await runner.push()
+        assert "renderPicker" in big.evaluated
+        hub._seen, hub._failing_since = True, time.monotonic() - 60  # the companion's port has stopped answering
+        await asyncio.wait_for(runner.run(), 15)
+        return big.evaluated
+
+    evaluated = asyncio.run(scenario())
+    assert "hidePicker" in evaluated[evaluated.index("renderPicker"):]
+
+
+class ClosingWS:
+    """A DevTools socket that closes while a call is being sent: the reader fails the waiter first."""
+
+    def __init__(self) -> None:
+        self.gone = asyncio.Event()
+        self.page = None
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        await self.gone.wait()
+        raise OSError("connection lost")
+
+    async def send(self, _):
+        self.gone.set()
+        await self.page.closed.wait()
+        raise OSError("connection lost")
+
+    async def close(self) -> None:
+        pass
+
+
+def test_a_page_that_closes_behind_a_call_files_no_problem_report():
+    async def scenario():
+        reports = []
+        asyncio.get_running_loop().set_exception_handler(lambda _loop, ctx: reports.append(ctx.get("message")))
+        ws = ClosingWS()
+        ws.page = Page({"id": "p", "url": "https://app.gaming.tools/dune"}, ws, asyncio.Queue())
+        try:
+            await ws.page.evaluate("1 + 1")
+        except OSError:
+            pass  # the caller learns of the close; nothing else may report it
+        gc.collect()
+        return reports
+
+    assert asyncio.run(scenario()) == []

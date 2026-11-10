@@ -38,7 +38,15 @@ Name: "restartcompanion"; Description: "Restart the companion now (necessary if 
 
 [Files]
 Source: "..\src\*"; DestDir: "{app}\src"; Excludes: "__pycache__,*.pyc"; Flags: recursesubdirs ignoreversion
-Source: "..\scripts\*.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
+; only the user scripts ($UserScripts in scripts\app-files.ps1, as the zip): admin and dev scripts stay out
+Source: "..\scripts\install.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "..\scripts\install-autorun.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "..\scripts\companion-autorun.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "..\scripts\companion-path.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "..\scripts\doctor.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "..\scripts\uv-setup.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "..\scripts\app-files.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "..\scripts\guild-key.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "..\docs\*"; DestDir: "{app}\docs"; Flags: recursesubdirs ignoreversion
 Source: "..\pyproject.toml"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\uv.lock"; DestDir: "{app}"; Flags: ignoreversion
@@ -56,6 +64,9 @@ Type: filesandordirs; Name: "{app}\.venv"
 Type: filesandordirs; Name: "{app}\src"
 
 [Code]
+var
+  SetupExitCode: Integer;  // non-zero when install.ps1 failed; becomes setup's exit code
+
 function SetupArgs(): String;
 begin
   Result := '-NoProfile -ExecutionPolicy Bypass -File "' + ExpandConstant('{app}\scripts\install.ps1') + '" -InstallUv';
@@ -63,6 +74,14 @@ begin
     Result := Result + ' -NoAutorun';
   if WizardIsTaskSelected('restartcompanion') then
     Result := Result + ' -RestartCompanion';
+  // silent: nobody answers the key prompt, so fail fast; the key comes from HARVESTING_DUNE_KEY
+  if WizardSilent then
+    Result := Result + ' -NonInteractive';
+  // /SYNCSERVER= and /CAFILE=: the release test checks its key with a throwaway local guild server
+  if ExpandConstant('{param:SyncServer}') <> '' then
+    Result := Result + ' -SyncServer "' + ExpandConstant('{param:SyncServer}') + '"';
+  if ExpandConstant('{param:CaFile}') <> '' then
+    Result := Result + ' -CaFile "' + ExpandConstant('{param:CaFile}') + '"';
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -74,8 +93,19 @@ begin
   WizardForm.StatusLabel.Caption := 'Installing the detector environment. The first time, this downloads Python...';
   if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), SetupArgs(), ExpandConstant('{app}'),
               SW_SHOW, ewWaitUntilTerminated, Code) or (Code <> 0) then
+  begin
+    SetupExitCode := Code;
+    if SetupExitCode = 0 then
+      SetupExitCode := 1;
     SuppressibleMsgBox('The setup of the detector did not complete (exit code ' + IntToStr(Code) + ').' + #13#10 + #13#10 +
       'Read ' + ExpandConstant('{app}\data\install.log') + '.' + #13#10 +
       'For a full check, run scripts\doctor.ps1 in ' + ExpandConstant('{app}') + '.',
       mbError, MB_OK, IDOK);
+  end;
+end;
+
+// a suppressed message box alone would let a silent or scripted install report success
+function GetCustomSetupExitCode(): Integer;
+begin
+  Result := SetupExitCode;
 end;

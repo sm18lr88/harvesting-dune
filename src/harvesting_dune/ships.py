@@ -1,4 +1,9 @@
 # Downed ships: crashed ships the game shows, remembered after they unload, until a worm takes them.
+"""A downed ship is a rare, short-lived target: the game drops the hull from its list a few hundred
+metres away and reloads it under a new actor id, so it is kept here by place, and its three
+containers tell when you have emptied it.
+"""
+
 from __future__ import annotations
 
 import math
@@ -50,6 +55,7 @@ class Ship:
     loaded: bool = True
     gone: bool = False
     containers: dict[str, tuple[int, int]] = field(default_factory=dict)  # actor id -> place
+    shown_empty: set[tuple[int, int]] = field(default_factory=set)  # places the game lists with hasLoot false
     emptied: bool = False
 
     @property
@@ -58,11 +64,22 @@ class Ship:
 
 
 def _emptied(ship: Ship, looted: dict[str, float]) -> bool:
-    """All three containers seen and opened by you, counted by place: a container that loaded again
-    has a new id, and one container opened early is not the whole ship."""
+    """All three containers seen and opened (the game shows them emptied, or you opened them), counted
+    by place: a container that loaded again has a new id, and one opened early is not the whole ship."""
     places = set(ship.containers.values())
-    opened = {p for k, p in ship.containers.items() if k in looted}
+    opened = {p for k, p in ship.containers.items() if k in looted} | ship.shown_empty
     return len(places) >= CONTAINERS_PER_SHIP and places <= opened
+
+
+def _see_containers(ship: Ship, containers: list[Actor]) -> None:
+    for c in containers:
+        if math.hypot(c.x - ship.x, c.y - ship.y) > CONTAINER_CM:
+            continue
+        place = ship.containers[c.key] = (round(c.x / CELL_CM), round(c.y / CELL_CM))
+        if c.has_loot is False:
+            ship.shown_empty.add(place)
+        elif c.has_loot is True:
+            ship.shown_empty.discard(place)
 
 
 class DownedShips:
@@ -82,8 +99,7 @@ class DownedShips:
         for ship in self.ships.values():
             ship.loaded = ship.key in loaded
             ship.gone = ship.gone or (not ship.loaded and pose is not None and pose.dist2d(ship.x, ship.y) < GONE_CM)
-            ship.containers.update((c.key, (round(c.x / CELL_CM), round(c.y / CELL_CM))) for c in containers
-                                   if math.hypot(c.x - ship.x, c.y - ship.y) <= CONTAINER_CM)
+            _see_containers(ship, containers)
             ship.emptied = _emptied(ship, looted)
         for key in [k for k, s in self.ships.items() if now - s.last_seen > REMEMBER_S]:
             del self.ships[key]

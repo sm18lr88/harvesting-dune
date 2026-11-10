@@ -11,6 +11,7 @@ $UvSha256 = @{  # from the .sha256 files of that GitHub release
     'x86_64'  = '0cdc5b38fe5a8168ed6a25814f5ba43c21d313dd3187314fccb37b7cec46e021'
     'aarch64' = '505d9e65e7692bac3ddf98c66754aa26c5050c409c184af30a881a0a72cc85e3'
 }
+$UvMinVersion = [version]'0.9.0'  # the first uv that downloads the stable CPython 3.14 that uv.lock asks for
 $script:UvProblems = New-Object System.Collections.Generic.List[string]
 
 function Get-UvArch {
@@ -23,7 +24,9 @@ function Get-UvArch {
 function Test-Uv([string]$path) {
     $ErrorActionPreference = 'Continue'
     if (-not $path -or -not (Test-Path -LiteralPath $path -PathType Leaf)) { return $false }
-    try { $null = & $path --version 2>&1; return ($LASTEXITCODE -eq 0) } catch { return $false }
+    try { $out = & $path --version 2>&1 } catch { return $false }
+    if ($LASTEXITCODE -ne 0 -or "$out" -notmatch 'uv (\d+\.\d+\.\d+)') { return $false }
+    return ([version]$Matches[1] -ge $UvMinVersion)
 }
 
 function Find-Uv([string]$UvDir, [switch]$SkipExisting) {

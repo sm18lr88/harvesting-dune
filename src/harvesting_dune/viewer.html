@@ -102,6 +102,15 @@
   [hidden] { display: none !important; }  /* a class's own display rule must not show a hidden part */
 .pick.far:not(:hover) { color: var(--ink-dim); background: transparent; border-color: var(--line); }
   .pick-name { font-weight: 500; overflow-wrap: anywhere; }
+  /* one row, several search modes (spice: all fields, large only, medium only) */
+  .pick.split { grid-template-columns: 12px minmax(0, 1fr) auto; cursor: default; }
+  .pick.split:active { transform: none; }
+  .pick.split[data-on="true"] { background: var(--accent-wash); }
+  .pick.split[data-on="true"] svg { visibility: visible; }
+  .pick.split[data-on="true"] .pick-name { color: var(--accent); }
+  .pick.split .pick-meta { grid-column: 2 / -1; }
+  .modes { display: inline-flex; gap: var(--s1); }
+  .modes button { min-height: 20px; padding: 0 var(--s2); font-size: var(--fs-small); }
   .pick-meta { grid-column: 2; color: var(--ink-dim); font-size: var(--fs-small); }
   .pick-meta:empty { display: none; }
   .tag { display: inline-block; font-size: .6875rem; line-height: 1.3; padding: 0 4px; background: var(--surface-3); color: var(--ink-dim); margin-left: var(--s1); }
@@ -250,6 +259,48 @@
       <div id="matches"></div>
     </section>
     <div id="browse" class="browse"></div>
+  </div>
+  <div class="col col-b">
+    <section class="card target" aria-labelledby="tName">
+      <div>
+        <h2 id="tName" class="display">&ndash;</h2>
+        <p id="tMeta" class="meta"></p>
+      </div>
+      <dl class="kv" id="tFacts"></dl>
+      <div id="itemInfo"></div>
+      <div id="farm"></div>
+      <div class="controls">
+        <label class="field"><span>Vehicle</span><select id="veh"><option>auto</option><option>sandcrawler</option><option>buggy</option><option>sandbike</option><option>ornithopter</option></select></label>
+        <span id="vehNote" class="note"></span>
+        <label class="switch" title="Ctrl+Alt+Down"><input type="checkbox" id="toggle"> Recommendations</label>
+        <div class="actions">
+          <button type="button" id="base" title="Use your current position as the unload / return point">Set base here</button>
+          <button type="button" id="block" title="Mark the current 50 m cell impassable for the planned vehicle">Block here</button>
+        </div>
+      </div>
+    </section>
+  <details class="sec" id="sec-mm">
+    <summary><h2>Lines &amp; minimap</h2><span class="sum" id="sum-mm"></span><span class="chev" aria-hidden="true"></span></summary>
+    <div class="sec-body">
+      <div>
+        <label class="switch inline" title="Ctrl+Alt+L"><input type="checkbox" id="lines"> Directional lines</label>
+        <p id="linesNote" class="note"></p>
+      </div>
+      <div class="inline">
+        <label for="maxKm">Max distance for lines</label>
+        <input id="maxKm" type="number" min="0" max="100" step="0.5"> <span>km</span>
+        <span class="note">0 = none</span>
+      </div>
+      <p id="mmOne" class="note" hidden></p>
+      <div>
+        <div id="mm" style="display:grid;gap:var(--s1);margin-top:var(--s2)"></div>
+      </div>
+      <div>
+        <p class="note">Extra markers (not searched):</p>
+        <div class="ticks" id="mmx"></div>
+      </div>
+    </div>
+  </details>
   <details class="sec" id="sec-dd">
     <summary><h2>Deep Desert</h2><span class="sum" id="sum-dd"></span><span class="chev" aria-hidden="true"></span></summary>
     <div class="sec-body">
@@ -263,48 +314,37 @@
 
     </div>
   </details>
-  </div>
-  <div class="col col-b">
-    <section class="card target" aria-labelledby="tName">
-      <div>
-        <h2 id="tName" class="display">&ndash;</h2>
-        <p id="tMeta" class="meta"></p>
-      </div>
-      <dl class="kv" id="tFacts"></dl>
-      <div id="itemInfo"></div>
-      <div id="farm"></div>
-      <div class="controls">
-        <label class="field"><span>Switch target</span><select id="res"></select></label>
-        <label class="field"><span>Vehicle</span><select id="veh"><option>auto</option><option>sandcrawler</option><option>buggy</option><option>sandbike</option><option>ornithopter</option></select></label>
-        <span id="vehNote" class="note"></span>
-      </div>
-      <div class="controls">
-        <label class="switch" title="Ctrl+Alt+Down"><input type="checkbox" id="toggle"> Recommendations</label>
-        <div class="actions">
-          <button type="button" id="base" title="Use your current position as the unload / return point">Set base here</button>
-          <button type="button" id="block" title="Mark the current 50 m cell impassable for the planned vehicle">Block here</button>
-        </div>
-      </div>
-    </section>
-  <details class="sec" id="sec-mm">
-    <summary><h2>Minimap &amp; lines</h2><span class="sum" id="sum-mm"></span><span class="chev" aria-hidden="true"></span></summary>
+  <details class="sec" id="sec-diag">
+    <summary><h2>Diagnostics</h2><span class="sum" id="sum-diag"></span><span class="chev" aria-hidden="true"></span></summary>
     <div class="sec-body">
+      <dl class="kv" id="facts"></dl>
       <div>
-        <label class="switch inline" title="Ctrl+Alt+L"><input type="checkbox" id="lines"> Directional lines</label>
-        <p id="linesNote" class="note"></p>
+        <div class="table-wrap"><table class="data"><thead><tr><th class="w-rank">#</th><th class="num w-dist">Dist</th><th>Area</th></tr></thead><tbody id="rows"></tbody></table></div>
       </div>
-      <div class="inline">
-        <label for="maxKm">Max distance for lines</label>
-        <input id="maxKm" type="number" min="0" max="100" step="0.5"> <span>km</span>
-        <span class="note">0 = none</span>
+      <p id="about" class="about"></p>
+    </div>
+  </details>
+  </div>
+  <div class="col col-c">
+  <details class="sec" id="sec-ships">
+    <summary><h2>Ships &amp; wrecks</h2><span class="sum" id="sum-ships"></span><span class="chev" aria-hidden="true"></span></summary>
+    <div class="sec-body">
+      <div class="cols">
+        <div><strong>Downed ships</strong> <span class="note">random, temporary</span><div id="shipList"></div></div>
+        <div><strong>Fixed shipwrecks</strong> <span class="note">always there</span><div id="wreckList"></div></div>
       </div>
-      <div>
-        <div id="mm" style="display:grid;gap:var(--s1);margin-top:var(--s2)"></div>
-      </div>
-      <div>
-        <p class="note">Extra markers (not searched):</p>
-        <div class="ticks" id="mmx"></div>
-      </div>
+    </div>
+  </details>
+  <details class="sec" id="sec-loot">
+    <summary><h2>Rare loot nearby</h2><span class="sum" id="sum-loot"></span><span class="chev" aria-hidden="true"></span></summary>
+    <div class="sec-body">
+      <div id="cages" class="cards"></div>
+    </div>
+  </details>
+  <details class="sec" id="sec-blows">
+    <summary><h2>Spice blows</h2><span class="sum" id="sum-blows"></span><span class="chev" aria-hidden="true"></span></summary>
+    <div class="sec-body">
+      <div id="blows"></div>
     </div>
   </details>
   <details class="sec" id="sec-guild">
@@ -334,42 +374,6 @@
       </div>
     </div>
   </details>
-  </div>
-  <div class="col col-c">
-  <details class="sec" id="sec-ships">
-    <summary><h2>Ships &amp; wrecks</h2><span class="sum" id="sum-ships"></span><span class="chev" aria-hidden="true"></span></summary>
-    <div class="sec-body">
-      <div class="cols">
-        <div><strong>Downed ships</strong> <span class="note">random, temporary</span><div id="shipList"></div><button type="button" data-go="downed_ships">Lead me to downed ships</button></div>
-        <div><strong>Fixed shipwrecks</strong> <span class="note">always there</span><div id="wreckList"></div><button type="button" data-go="shipwrecks">Lead me to fixed shipwrecks</button></div>
-        <div><strong>Buggy &amp; ornithopter wrecks</strong> <span class="note">always there</span><button type="button" data-go="wrecks">Lead me to vehicle wrecks</button></div>
-      </div>
-    </div>
-  </details>
-  <details class="sec" id="sec-loot">
-    <summary><h2>Rare loot nearby</h2><span class="sum" id="sum-loot"></span><span class="chev" aria-hidden="true"></span></summary>
-    <div class="sec-body">
-      <div id="cages" class="cards"></div>
-    </div>
-  </details>
-  <details class="sec" id="sec-blows">
-    <summary><h2>Spice blows</h2><span class="sum" id="sum-blows"></span><span class="chev" aria-hidden="true"></span></summary>
-    <div class="sec-body">
-      <div id="blows"></div>
-    </div>
-  </details>
-  <details class="sec" id="sec-diag">
-    <summary><h2>Diagnostics</h2><span class="sum" id="sum-diag"></span><span class="chev" aria-hidden="true"></span></summary>
-    <div class="sec-body">
-      <dl class="kv" id="facts"></dl>
-      <div>
-        <div class="table-wrap"><table class="data"><thead><tr><th class="w-rank">#</th><th class="num w-dist">Dist</th><th>Area</th></tr></thead><tbody id="rows"></tbody></table></div>
-      </div>
-      <p id="about" class="about"></p>
-    </div>
-  </details>
-  </div>
-  </div>
   <details class="sec" id="sec-chars">
     <summary><h2>Characters</h2><span class="sum" id="sum-chars"></span><span class="chev" aria-hidden="true"></span></summary>
     <div class="sec-body">
@@ -384,6 +388,8 @@
       </div>
     </div>
   </details>
+  </div>
+  </div>
 </main>
 <script>
 const $ = (id) => document.getElementById(id);
@@ -433,13 +439,14 @@ const feedback = (ok, t) => {
 const post = (action, value) =>
   fetch(`/control?action=${action}${value ? `&value=${encodeURIComponent(value)}` : ""}`, { method: "POST" })
     .then((r) => r.ok ? feedback(true, "Saved: the minimap updates within a few seconds")
-                      : feedback(false, `Not applied (HTTP ${r.status}). Reload this page (Ctrl+F5).`))
+                      // 400 is a refused value; an outdated tab already reloads itself on a new page version
+                      : feedback(false, r.status === 400 ? "Not applied: the detector refused it (no position yet, or not a valid value)."
+                                                         : `Not applied (HTTP ${r.status}). Reload this page (Ctrl+F5).`))
     .catch(() => feedback(false, "Not applied: the detector is not running. Is the companion open?"));
 // a looted material has no companion markers: ticking it on the minimap is the way to search it
 const pick = (key) => post(key.startsWith("item:") ? "minimap_toggle" : "resource", key);
 
 $("lines").onchange = () => post("lines");
-$("res").onchange = (e) => post("resource", e.target.value);
 $("veh").onchange = (e) => post("vehicle", e.target.value);
 $("toggle").onchange = () => post("toggle");
 $("base").onclick = () => post("base");
@@ -451,12 +458,12 @@ $("pvpOnly").onchange = () => post("pvp_only");
 $("maxKm").onchange = (e) => post("max_km", e.target.value || "0");
 // generated buttons and tick boxes: one listener each, so re-rendering never loses a handler
 document.addEventListener("click", (ev) => {
-  const b = ev.target.closest("[data-pick],[data-go],[data-route],[data-farm],[data-gobjdel]");
+  const b = ev.target.closest("[data-pick],[data-route],[data-farm],[data-gobjdel]");
   if (!b || b.disabled) return;
   if (b.dataset.gobjdel) post("object_delete", b.dataset.gobjdel);  // one of your guild pins
   else if (b.dataset.route) post("route_start", b.dataset.route);
   else if (b.dataset.farm) post(b.dataset.farm);
-  else if (b.dataset.pick) pick(b.dataset.pick); else post("resource", b.dataset.go);
+  else if (b.dataset.pick) pick(b.dataset.pick);
 });
 document.addEventListener("change", (ev) => {
   const t = ev.target;
@@ -527,6 +534,11 @@ const score = (q, e) => {
   return best;
 };
 let catalog = [], catalogSig = "", query = "";
+// search modes listed on their family's row, not as rows of their own
+const UNDER = { spice_large: "spice", spice_medium: "spice" };
+const MODES = { spice: [["spice", "All"], ["spice_large", "Large"], ["spice_medium", "Medium"]] };
+const rowOf = (e) => e.under ? catalog.find((x) => x.key === e.under) || e : e;
+const targetName = (s) => { const e = catalog.find((x) => x.key === s.resource); return e ? e.name : s.itemInfo ? s.itemInfo.name : s.resource || "–"; };
 const openGroups = new Set();
 // everything you can search for, map resources and looted items alike
 const refreshCatalog = (s) => {
@@ -534,12 +546,20 @@ const refreshCatalog = (s) => {
   if (sig === catalogSig) return;
   catalogSig = sig;
   catalog = [];
-  for (const [k, n, g] of s.resources || []) catalog.push({ key: k, name: n, group: g || "Other", kind: "res", aliases: ALIASES[k] || [] });
+  for (const [k, n, g] of s.resources || []) catalog.push({ key: k, name: n, group: g || "Other", kind: "res", aliases: ALIASES[k] || [], under: UNDER[k] });
   for (const g of s.itemGroups || []) for (const [k, n, c, ships, chance] of g.items)
     catalog.push({ key: k, name: n, group: g.group, kind: "item", here: c, ships, chance, aliases: [] });
 };
 const whereText = (e) => e.kind !== "item" ? "" : e.here ? plural(e.here, "place") + " here" : e.ships ? "downed ships" : "not on this map";
+const splitHtml = (e, s, withGroup) => {
+  const modes = MODES[e.key].filter(([k]) => catalog.some((x) => x.key === k));
+  const on = modes.some(([k]) => k === s.resource);
+  return `<div class="pick split" role="group" aria-label="${esc(e.name)}" data-on="${on}">` + CHECK + `<span class="pick-name">${esc(e.name)}</span>`
+    + `<span class="modes">${modes.map(([k, l]) => `<button type="button" data-pick="${esc(k)}" aria-pressed="${k === s.resource}">${l}</button>`).join("")}</span>`
+    + `<span class="pick-meta">${withGroup ? esc(e.group) : ""}</span></div>`;
+};
 const pickHtml = (e, s, withGroup) => {
+  if (MODES[e.key]) return splitHtml(e, s, withGroup);
   const on = e.key === s.resource;
   // drops only on other maps: dimmed, but still pickable, so its card shows where it drops
   const far = e.kind === "item" && !e.here && !e.ships && !on;
@@ -550,33 +570,40 @@ const pickHtml = (e, s, withGroup) => {
     + CHECK + `<span class="pick-name">${esc(e.name)}</span><span class="pick-meta">${esc(meta)}${tags}</span></button>`;
 };
 const matchesHtml = (s, q) => {
-  const found = catalog.map((e) => [score(q, e), e]).filter(([sc]) => sc >= MATCH).sort((a, b) => b[0] - a[0]).slice(0, 12);
+  const rows = new Map();  // a size mode found by its own words still shows its family's one row
+  catalog.map((e) => [score(q, e), e]).filter(([sc]) => sc >= MATCH).sort((a, b) => b[0] - a[0])
+    .forEach(([sc, e]) => { const r = rowOf(e); if (!rows.has(r.key)) rows.set(r.key, [sc, r]); });
+  const found = [...rows.values()].slice(0, 12);
   if (!found.length) return `<p class="empty">No match for &ldquo;${esc(q)}&rdquo;. Try another spelling, or clear the search to browse by class.</p>`;
   return `<div class="picks" role="group" aria-label="Matches">${found.map(([, e]) => pickHtml(e, s, true)).join("")}</div>`;
 };
 const browseHtml = (s) => {
   const groups = new Map();
-  for (const e of catalog) { if (!groups.has(e.group)) groups.set(e.group, []); groups.get(e.group).push(e); }
+  for (const e of catalog) { if (e.under) continue; if (!groups.has(e.group)) groups.set(e.group, []); groups.get(e.group).push(e); }
   return [...groups.entries()].sort((a, b) => rank(a[0]) - rank(b[0])).map(([g, es]) => {
     const items = es[0].kind === "item";
     const here = es.filter((e) => e.here || e.ships).length;
-    const target = es.find((e) => e.key === s.resource);
+    const target = catalog.find((e) => e.key === s.resource && rowOf(e).group === g);
     return `<details class="grp" data-grp="${esc(g)}"${openGroups.has(g) ? " open" : ""}><summary><span class="dot" style="--c:${groupColor(g)}"></span>${esc(g)}`
       + `<span class="count">${target ? CHECK + " " + esc(target.name) + " · " : ""}${items ? `${here} of ${es.length} drop on this map` : es.length}</span><span class="chev" aria-hidden="true"></span></summary>`
       + `<div class="picks">${es.map((e) => pickHtml(e, s)).join("")}</div></details>`;
   }).join("");
 };
+// the runner stops crawling once a crawl finished, even one that found nothing; an older detector sends only the count
+const indexState = (ix, count) => !ix || (ix.builtAt === undefined ? !ix[count] : ix.builtAt == null) ? "building" : ix[count] ? "ready" : "empty";
 const renderSearch = (s) => {
   const q = query.trim();
-  const building = !s.itemIndex || !s.itemIndex.items ? `<p class="empty">Building the material index from gaming.tools (about 30 s, once a week)&hellip; Map resources can be searched now.</p>` : "";
+  const ix = indexState(s.itemIndex, "items");
+  const building = ix === "building" ? `<p class="empty">Building the material index from gaming.tools (about 30 s, once a week)&hellip; Map resources can be searched now.</p>`
+    : ix === "empty" ? `<p class="empty">gaming.tools listed no lootable materials; the next try is within a week. Map resources can be searched now.</p>` : "";
   swap("matches", q ? matchesHtml(s, q) : "");
   swap("browse", q ? "" : building + browseHtml(s));
 };
 $("q").oninput = (e) => { query = e.target.value; if (lastSnap) renderSearch(lastSnap); };
 $("q").onkeydown = (e) => {
-  if (e.key === "Enter") { const b = $("matches").querySelector(".pick:not(:disabled)"); if (b) { e.preventDefault(); pick(b.dataset.pick); } }
+  if (e.key === "Enter") { const b = $("matches").querySelector("[data-pick]:not(:disabled)"); if (b) { e.preventDefault(); pick(b.dataset.pick); } }
   else if (e.key === "Escape") { if (query) { e.preventDefault(); query = $("q").value = ""; renderSearch(lastSnap); } }
-  else if (e.key === "ArrowDown") { const b = $("matches").querySelector(".pick:not(:disabled)"); if (b) { e.preventDefault(); b.focus(); } }
+  else if (e.key === "ArrowDown") { const b = $("matches").querySelector("[data-pick]:not(:disabled)"); if (b) { e.preventDefault(); b.focus(); } }
 };
 // remember which classes you opened while browsing (toggle does not bubble: capture it)
 document.addEventListener("toggle", (ev) => {
@@ -588,7 +615,7 @@ document.addEventListener("toggle", (ev) => {
 const renderTarget = (s) => {
   const e = catalog.find((x) => x.key === s.resource);
   const info = s.itemInfo;
-  text("tName", e ? e.name : info ? info.name : s.resource || "–");
+  text("tName", targetName(s));
   const farmHere = (s.farmRoutes || []).some((r) => r.here);  // the item data may lag: a farm route here still drops it
   text("tMeta", [e ? e.group : info ? info.group : "", e ? (farmHere && !e.here ? "farm route here" : whereText(e)) : ""].filter(Boolean).join(" · "));
   const best = (s.areas || []).find((a) => a.feasible);
@@ -600,13 +627,6 @@ const renderTarget = (s) => {
   text("vehNote", s.vehicleOverride ? `detected ${s.vehicle}` : `planning ${s.planVehicle}`);
   if (idle($("veh"))) $("veh").value = s.vehicleOverride || "auto";
   $("toggle").checked = !!s.enabled;
-  // quick switch: map resources plus the items that drop on this map
-  const sel = $("res");
-  const itemRows = (s.itemGroups || []).flatMap((g) => g.items.filter((i) => i[2] > 0 || i[3] || i[0] === s.resource).map((i) => [i[0], i[1], g.group]));
-  const html = byGroup([...(s.resources || []), ...itemRows], 2).map(([g, rows]) =>
-    `<optgroup label="${esc(g)}">${rows.map(([k, n]) => `<option value="${esc(k)}">${esc(n)}</option>`).join("")}</optgroup>`).join("");
-  if (sigs.res !== html) { sigs.res = html; sel.innerHTML = html; }
-  if (idle(sel)) sel.value = s.resource;
   // where a looted item drops
   swap("itemInfo", !info ? "" : (info.sources.length
       ? `<div class="table-wrap"><table class="data"><thead><tr><th>Drops from</th><th class="num">Places</th><th class="num">Best chance</th><th class="num">Amount</th><th class="num">Avg each</th><th class="num">Nearest</th></tr></thead><tbody>`
@@ -623,7 +643,7 @@ const renderTarget = (s) => {
     + ((info.elsewhere || []).length ? `<div class="table-wrap" style="margin-top:var(--s3)"><table class="data"><thead><tr><th>Other regions</th><th>Source</th><th class="num">Best chance</th><th class="num">Places</th></tr></thead><tbody>`
       + info.elsewhere.map((x) => `<tr><td>${esc(x.region)}</td><td>${esc(x.source)}</td><td class="num">${pct(x.bestChance)}</td><td class="num">${x.places}</td></tr>`).join("") + `</tbody></table></div>` : "")
     + ((info.reward || []).length ? `<p class="note" style="margin-top:var(--s2)">Contract reward: ${info.reward.map(esc).join(" &middot; ")}</p>` : "")
-    + (info.vendors.length ? `<p class="note" style="margin-top:var(--s2)">${info.via === "schematic" ? "Schematic sold by" : "Sold by"}: ${info.vendors.map((v) => `${esc(v.name)} (${v.price.toLocaleString()} Solari${v.stock ? ", " + v.stock + " in stock" : ""})`).join(" &middot; ")}</p>` : ""));
+    + (info.vendors.length ? `<p class="note" style="margin-top:var(--s2)">${info.via === "schematic" ? "Schematic sold by" : "Sold by"}: ${info.vendors.map((v) => `${esc(v.name)} (${esc(v.price?.toLocaleString() ?? "?")} Solari${v.stock ? ", " + esc(v.stock) + " in stock" : ""})`).join(" &middot; ")}</p>` : ""));
 };
 
 // farm route: the item's routes in one table; the route you are on, its line and its buttons above it
@@ -653,6 +673,11 @@ const renderMinimap = (s) => {
   text("linesNote", !mm.lines ? "Off: all ticked resources show, no lines."
     : mm.linesActive ? "One resource at a time. Cyan = best, thin = next best."
     : `Tick exactly one resource to get lines (${mm.visibleCount} shown).`);
+  // with lines on the minimap follows the target: the ticks matter only while lines are off (or wait for one tick)
+  const ticks = !mm.lines || !mm.linesActive;
+  $("mm").hidden = !ticks;
+  $("mmOne").hidden = ticks;
+  text("mmOne", ticks ? "" : `Minimap shows: ${targetName(s)}`);
   swap("mm", byGroup(mm.items, 3).map(([g, rows]) =>
     `<div class="mm-grp"><div class="mm-head"><span class="dot" style="--c:${groupColor(g)}"></span>${esc(g)}</div><div class="ticks">`
     + rows.map(([k, n, shown]) => `<label class="tick"><input type="checkbox" data-mm="${esc(k)}"${shown ? " checked" : ""}> ${esc(n)}</label>`).join("")
@@ -682,14 +707,13 @@ const renderShips = (s) => {
     ? `<ul>${wrecks.slice(0, 6).map((w) => `<li>${esc(w.name)} &middot; ${dist(w.distanceM)}${w.zone ? " &middot; " + esc(w.zone) : ""}</li>`).join("")}</ul>`
       + (wrecks.length > 6 ? `<p class="note">+${wrecks.length - 6} more on this map</p>` : "")
     : `<p class="note">Read from the companion's map once it is open.</p>`);
-  document.querySelectorAll("[data-go]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.go === s.resource)));
   text("sum-ships", `${plural(ships.length, "downed ship")} seen · ${s.shipsReported || 0} reported · ${plural(wrecks.length, "fixed shipwreck")}`);
 };
 const dropRow = (d) => `<tr class="${d.special ? "special" : ""}">`
   + `<td><img src="${cdn(d.icon)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'"></td>`
   + `<td class="r-${esc(d.rarity)}">${esc(d.name)}${d.special && !d.schematic ? " &#9733;" : ""}${d.schematic ? " (schematic)" : ""}</td>`
   + `<td class="num"><span class="bar" style="width:${Math.max(2, Math.round(d.chance * 60))}px"></span>${pct(d.chance)}</td>`
-  + `<td class="num">&times;${d.min === d.max ? d.min : d.min + "&ndash;" + d.max}</td></tr>`;
+  + `<td class="num">&times;${esc(d.min)}${d.min === d.max ? "" : "&ndash;" + esc(d.max)}</td></tr>`;
 const cageCard = (c) => `<div class="cage${c.kind === "Ultra Rare" ? " ultra" : ""}">`
   + `<div class="cage-head"><span class="kind">${esc(c.kind)} cage</span><span>${c.distanceM} m away</span><span class="note">${lvl(c.heightM)}</span></div>`
   + `<div class="note">` + (c.known
@@ -701,11 +725,12 @@ const cageCard = (c) => `<div class="cage${c.kind === "Ultra Rare" ? " ultra" : 
       + `</tbody></table>` : "")
   + `</div>`;
 const renderLoot = (s) => {
-  const building = !s.lootIndex || !s.lootIndex.cages;
-  swap("cages", building
+  const ix = indexState(s.lootIndex, "cages");
+  swap("cages", ix === "building"
     ? `<p class="note">Building the loot index from gaming.tools (about 30 s, once a week)&hellip;</p>`
+    : ix === "empty" ? `<p class="note">gaming.tools listed no rare cages; the next try is within a week.</p>`
     : s.loot.length ? s.loot.map(cageCard).join("") : `<p class="note">No rare or ultra-rare cages loaded around you right now.</p>`);
-  text("sum-loot", building ? "building the loot index" : s.loot.length ? `${plural(s.loot.length, "cage")} near you` : "none near you");
+  text("sum-loot", ix === "building" ? "building the loot index" : ix === "empty" ? "gaming.tools listed none" : s.loot.length ? `${plural(s.loot.length, "cage")} near you` : "none near you");
 };
 const renderBlows = (s) => {
   const blows = s.blows || [];
@@ -717,9 +742,6 @@ const renderBlows = (s) => {
 };
 const renderDiag = (s) => {
   const facts = {
-    Status: s.status,
-    Hotspot: s.hotspot ? `${s.hotspot.cell} (${s.hotspot.zone}, ${s.hotspot.nodes} nodes within ~500 m)` : "Deep Desert only",
-    Vehicle: `${s.vehicle} (planning for ${s.planVehicle}${s.vehicleOverride ? ", manual" : ", auto"})`,
     Activity: s.characterState || s.activity || "–",
     "Tracked actors": s.tracked,
     "Scan rows": `${s.scanRows}${s.scanStatus ? ` (HTTP ${s.scanStatus})` : ""}`,
@@ -770,14 +792,25 @@ const near = (m) => m == null ? "" : m >= 1000 ? `${(m / 1000).toFixed(1)} km` :
 const left = (s) => s < 3600 ? `${Math.max(1, Math.round(s / 60))} min` : `${(s / 3600).toFixed(1)} h`;  // a pin's remaining time
 const pinWhere = (m) => m.worldId == null ? "everywhere" : [WORLDS[m.worldId] || m.worldId, m.sector].filter(Boolean).join(" ");
 const typeName = (t) => String(t || "").replace(/(ore|rock|crystal|mass)$/, " $1").replace(/^./, (c) => c.toUpperCase());
+// a shared find's map marker as the page names it elsewhere: the resource's own name from the picker data
+const MARKER_KEY = { magnetiteore: "iron", azuriteore: "copper", bauxiteore: "aluminum", dolomiterock: "carbon", titaniumore: "titanium",
+  stravidiumore: "stravidium", jasmiumore: "jasmium", erythriteore: "erythrite", basaltore: "basalt", rhyoliteore: "granite",
+  fuelcellwreckage: "fuelcell", scrapmetalwreckage: "scrap", salvagesteel: "downed_ships", floursand: "flour", brittlebush: "brittlebush",
+  primrosefield: "primrose", saguaroseed: "agave" };
+const MARKER_NAME = { spicefieldsmall: "Small spice field", spicefieldmedium: "Medium spice field", spicefieldlarge: "Large spice field",
+  lootcontainerrare: "Rare cage", lootcontainerultrarare: "Ultra-rare cage" };
+const markerName = (type) => {
+  const m = String(type || "").toLowerCase(), e = catalog.find((x) => x.key === MARKER_KEY[m]);
+  return MARKER_NAME[m] || (e ? e.name : typeName(type));
+};
 const findText = (f) => {
   switch (f.cls) {
-    case "spice": return `${f.size ? f.size + " " : ""}spice field${f.fill == null ? "" : ` · ${Math.round(f.fill * 100)}% full`}`;
-    case "blow": return `spice blow${f.size ? ` · ${f.size}` : ""}`;
-    case "ship": return "downed ship";
-    case "mined": return `${typeName(f.type)} · mined out`;
-    case "stale": return `${typeName(f.type)} · gone`;
-    case "ore": return `${f.name || typeName(f.type)} · live`;
+    case "spice": return `${f.size ? f.size[0].toUpperCase() + f.size.slice(1) + " spice field" : "Spice field"}${f.fill == null ? "" : ` · ${Math.round(f.fill * 100)}% full`}`;
+    case "blow": return `Spice blow${f.size ? ` · ${f.size}` : ""}`;
+    case "ship": return "Downed ship";
+    case "mined": return `${markerName(f.type)} · mined out`;
+    case "stale": return `${markerName(f.type)} · gone`;
+    case "ore": return `${f.name || markerName(f.type)} · live`;
     default: return `${f.cls} ${f.type}`;  // a class this page does not know yet is still listed
   }
 };
@@ -949,10 +982,13 @@ const detailHtml = (d, s) => {
     + `<div><strong>This session</strong>${sessionHtml(p.session, shared)}</div></div>`;
 };
 const renderCharDetail = (s) => {
+  const old = $("cRecipeQ"), caret = old && !idle(old) ? [old.selectionStart, old.selectionEnd] : null;
   if (swap("cDetail", detailHtml(charDetail, s)) && $("cRecipeQ")) {
-    $("cRecipeQ").value = charQuery;
-    $("cRecipeQ").oninput = (e) => { charQuery = e.target.value; swap("cRecipes", recipesHtml()); };
+    const q = $("cRecipeQ");
+    q.value = charQuery;
+    q.oninput = (e) => { charQuery = e.target.value; swap("cRecipes", recipesHtml()); };
     sigs.cRecipes = null;  // a new element: its old signature no longer applies
+    if (caret) { q.focus(); q.setSelectionRange(...caret); }  // a guildmate's new profile must not take the search from under the typist
   }
   if ($("cRecipes")) swap("cRecipes", recipesHtml());
 };

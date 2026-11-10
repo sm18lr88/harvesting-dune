@@ -15,7 +15,7 @@ import secrets
 import time
 
 from .gate import REFUSED
-from .peerview import _num, _skip, _text
+from .peerview import _coord, _num, _skip, _text
 from .zones import DEFAULT_FIT, cell_name, is_deep_desert
 
 PIN_TTL_S = 2 * 3600
@@ -59,7 +59,7 @@ def _point(geometry: object) -> tuple[float, float, float] | None:
     """Where a point object sits; None for no geometry or a shape this client does not draw."""
     if not isinstance(geometry, dict) or geometry.get("type") != "point":
         return None
-    x, y = _num(geometry.get("x")), _num(geometry.get("y"))
+    x, y = _coord(geometry.get("x")), _coord(geometry.get("y"))
     return None if x is None or y is None else (x, y, _num(geometry.get("z")) or 0.0)
 
 
@@ -73,6 +73,7 @@ class ObjectsMixin:
         """Forget received and staged objects (a new key or identity); the capability memory stays."""
         p = self.peers
         p.objects, p.objects_out, p.objects_note, p.my_tag, p.published_at = {}, [], None, None, 0.0
+        p.objects_asked = None
 
     # -- receiving -----------------------------------------------------------------------------
     def _merge_objects(self, rows: object) -> bool:
@@ -82,14 +83,14 @@ class ObjectsMixin:
         if not isinstance(rows, list):
             _skip("object", "objects is not a list")
             return False
-        before = self._drawable_revs()
-        for row in rows:
-            o = _object(row)
+        before, tag, parsed = self._drawable_revs(), peers.my_tag, [_object(row) for row in rows]
+        # learned before any row is flagged: a same-key alt's row may come ahead of our own in rev order
+        peers.my_tag = next((o["playerTag"] for o in parsed if o is not None and me is not None and o["characterId"] == me),
+                            peers.my_tag)
+        for o in parsed:
             if o is None:
                 _skip("object", "missing or bad id, kind, characterId, playerTag, ttlS, ageS, rev, scope or geometry")
                 continue
-            if me is not None and o["characterId"] == me:
-                peers.my_tag = o["playerTag"]
             key, ttl, age = (o["playerTag"], o["id"]), o.pop("ttlS"), o.pop("ageS")
             if ttl <= 0:
                 peers.objects.pop(key, None)
@@ -97,7 +98,16 @@ class ObjectsMixin:
             o.update(received_feed=self.clock - age, expires_feed=self.clock + ttl,
                      mine=o["characterId"] == me or o["playerTag"] == peers.my_tag)
             peers.objects[key] = o
-        return before != self._drawable_revs()
+        claimed = peers.my_tag != tag and self._claim_tagged()
+        return claimed or before != self._drawable_revs()
+
+    def _claim_tagged(self) -> bool:
+        """Our tag learned now also owns rows stored earlier: a same-key alt's pin that came in an
+        earlier reply. True when one became ours."""
+        tagged = [o for o in self.peers.objects.values() if not o["mine"] and o["playerTag"] == self.peers.my_tag]
+        for o in tagged:
+            o["mine"] = True
+        return bool(tagged)
 
     def _drawable_revs(self) -> dict:
         return {k: o["rev"] for k, o in self.peers.objects.items() if _point(o["geometry"])}
@@ -126,8 +136,7 @@ class ObjectsMixin:
         for o in rows:
             x, y, z = _point(o["geometry"])
             out.append({"id": f"{o['playerTag']}:{o['id']}", "kind": o["kind"], "x": x, "y": y, "z": z, "body": o["body"],
-                        "mine": o["mine"], "ageS": round(self.clock - o["received_feed"]),
-                        "ttlS": max(0, round(o["expires_feed"] - self.clock)), "by": o["characterName"]})
+                        "mine": o["mine"], "by": o["characterName"]})
         return out
 
     def objects_snapshot(self) -> dict:
@@ -171,10 +180,10 @@ class ObjectsMixin:
             return "no position yet"
         if scope == "here" and self.partition() is None:
             return "no map yet"
-        live = sum(1 for o in p.objects.values() if o["mine"]) + sum(1 for u in p.objects_out if u["ttlS"] > 0)
-        if live >= MAX_LIVE_MINE:
+        staged = sum(1 for u in p.objects_out if u["ttlS"] > 0)
+        if sum(1 for o in p.objects.values() if o["mine"]) + staged >= MAX_LIVE_MINE:
             return f"you already have {MAX_LIVE_MINE} live pins: delete one first"
-        if len(self._drawable_here()) >= MAX_LIVE_GROUP:
+        if len(p.objects) + staged >= MAX_LIVE_GROUP:  # the server counts every map and every shape
             return f"the guild already has {MAX_LIVE_GROUP} live objects"
         return None
 
@@ -217,14 +226,21 @@ class ObjectsMixin:
     def objects_upload(self) -> list[dict]:
         """What the next sync carries: nothing until a response of this process showed `objects`."""
         p = self.peers
-        return list(p.objects_out[:MAX_PER_SYNC]) if p.objects_seen else []
+        uploads = list(p.objects_out[:MAX_PER_SYNC]) if p.objects_seen else []
+        p.objects_asked = {u["id"] for u in uploads}  # the sync loop asks right before it sends
+        return uploads
 
     def objects_sent(self, uploads: list[dict]) -> None:
         sent = {u["id"] for u in uploads}
         self.peers.objects_out = [u for u in self.peers.objects_out if u["id"] not in sent]
 
     def objects_refused(self, note: str) -> None:
-        """The server refused the staged objects (a 400 naming `objects[...]`): drop them, say why."""
-        self.peers.objects_out = []
-        cap = note.split(" ")[0] == "object-cap"
+        """The server refused the objects of the last request (a 400 naming `objects[...]`): drop
+        them, say why. One staged after that request left was never judged, so it stays; with no
+        request on record every staged one counts. A cap refusal keeps the deletes: they always pass
+        the cap, and the row is already hidden here. Any other refusal may name a delete itself, so
+        keeping it would resend it in a loop."""
+        cap, asked = note.split(" ")[0] == "object-cap", self.peers.objects_asked
+        self.peers.objects_out = [u for u in self.peers.objects_out
+                                  if (asked is not None and u["id"] not in asked) or (cap and u["ttlS"] == 0)]
         self.peers.objects_note = "the server refused the pin" + (": too many live objects" if cap else "")

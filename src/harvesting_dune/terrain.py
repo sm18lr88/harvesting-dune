@@ -149,7 +149,7 @@ class TerrainGrid:
                     ev.z_min, ev.z_max, ev.z_sum, ev.z_n = float(z_min), float(z_max), float(z_sum), int(z_n)
                 grid.cells[(int(i), int(j))] = ev
                 grid._driven_vehicles |= ev.driven_by
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 continue
         return grid
 
@@ -343,7 +343,10 @@ class TerrainGrid:
             octile = max(dx, dy) + (_STEP[1] - 1.0) * min(dx, dy)
             return max(0.0, octile - r * _STEP[1]) * CELL_CM * floor
 
-        window = min(max_cells, max(abs(g[0] - s[0]), abs(g[1] - s[1])) + r + margin_cells)
+        span = max(abs(g[0] - s[0]), abs(g[1] - s[1]))
+        if span - r > max_cells:
+            return None  # no goal cell lies inside the window: searching it would only flood it
+        window = min(max_cells, span + r + margin_cells)
         # Bounding f turns a failed search from "flood the whole window" into a small ellipse.
         straight = h(s)
         limit = straight * max_detour * v.unknown_cost + detour_slack_cm

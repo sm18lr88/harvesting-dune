@@ -13,7 +13,6 @@ chances, which is what the decision "is it worth the trip" needs.
 from __future__ import annotations
 
 import dataclasses
-import json
 import logging
 import math
 import time
@@ -21,13 +20,14 @@ from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
 
-from .fsutil import try_write_json
+from .fsutil import parse_json, try_write_json
 
 log = logging.getLogger(__name__)
 
 CRAWL_SCRIPT = resources.files(__package__).joinpath("loot_crawl.js").read_text("utf8")
 MAX_AGE_S = 7 * 24 * 3600
-CACHE_VERSION = 2  # bump when the crawl output changes shape; a stale cache is rebuilt
+AHEAD_S = 300.0  # a build stamped further ahead came from a fast PC clock: it would never age
+CACHE_VERSION = 3  # bump when the crawl output changes shape; a stale cache is rebuilt (3: schematics, Small Ultra Rare)
 MATCH_CM = 200.0  # live cages sit exactly on their database location (measured: 0.0 m)
 CAGE_KINDS = {"UltraRareContainer": "Ultra Rare", "RareContainer": "Rare"}
 RARITY_RANK = {"Common": 0, "Uncommon": 1, "Rare": 2, "Epic": 3, "Legendary": 4, "Unique": 5}
@@ -52,10 +52,16 @@ def is_special(d: dict) -> bool:
     return (d.get("rarity") == "Unique" or bool(d.get("unique"))) and not material
 
 
+def _numeric(*values: object) -> bool:
+    return all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) for v in values)
+
+
 def _combine(drops: list[dict]) -> list[dict]:
     """Merge repeated rolls of one item: chance of getting at least one, total quantity range."""
     by: dict[str, dict] = {}
     for d in drops:
+        if not _numeric(d.get("chance") or 0.0, d.get("min") or 1, d.get("max") or 1):
+            continue  # text amounts would be joined, not added
         lo, hi = sorted((d.get("min") or 1, d.get("max") or 1))  # some rows have them swapped
         cur = by.get(d["id"])
         if cur is None:
@@ -96,13 +102,13 @@ class LootIndex:
 
     @property
     def stale(self) -> bool:
-        return self.built is None or self.version != CACHE_VERSION or time.time() - self.built > MAX_AGE_S
+        return self.built is None or self.version != CACHE_VERSION or not -AHEAD_S <= time.time() - self.built <= MAX_AGE_S
 
     def load(self) -> None:
         if not self.path or not self.path.exists():
             return
         try:
-            data = json.loads(self.path.read_text("utf8"))
+            data = parse_json(self.path.read_text("utf8"))
             self._set(data["built"] / 1000, [Cage(**c) for c in data["cages"]])
             self.version = data.get("version")
         except (OSError, ValueError, KeyError, TypeError):
@@ -110,11 +116,13 @@ class LootIndex:
 
     def ingest_crawl(self, raw: str) -> int:
         """Keep rare/ultra-rare cage locations from a crawl result; cache them."""
-        data = json.loads(raw)
+        data = parse_json(raw)
         cages = [
             Cage(c["map"], c["x"], c["y"], c["z"], c["name"], _combine(c["drops"]))
             for c in data.get("containers", [])
             if "rare" in (c.get("name") or "").lower() and c.get("map")
+            # a location the CDN gave without a coordinate is no place to match a cage against
+            and all(isinstance(c.get(k), (int, float)) and math.isfinite(c[k]) for k in ("x", "y", "z"))
         ]
         self._set(data.get("built", time.time() * 1000) / 1000, cages)
         self.version = CACHE_VERSION

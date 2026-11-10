@@ -1,8 +1,8 @@
 # Log setup: log files that keep every warning and error, across restarts, from every source.
 """Logging for a live run.
 
-    data\\logs\\detector.log   everything from INFO up (2 MB x 5 files, oldest dropped)
-    data\\logs\\errors.log     only warnings and errors (1 MB x 5 files)
+    data\\logs\\detector.log   everything from INFO up (2 MB each, the current file plus 5 old ones)
+    data\\logs\\errors.log     only warnings and errors (1 MB each, the current file plus 5 old ones)
     stderr                    as before (the autorun watcher writes it to data-run.log)
 
 Also routed into these logs: uncaught exceptions, exceptions in threads, exceptions in
@@ -22,7 +22,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 FORMAT = "%(asctime)s %(levelname)s %(message)s"
-_last: dict[str, tuple[float, int]] = {}  # key -> (last logged, repeats held back since)
+_last: dict[str, tuple[float, int, float]] = {}  # key -> (last logged, repeats held back since, last repeat)
 log = logging.getLogger("harvesting_dune")
 
 
@@ -98,11 +98,11 @@ def limited(logger: logging.Logger, key: str, msg: str, *args: object, level: in
             every_s: float = 60.0) -> None:
     """Log at most once per `every_s` for `key`; the next message says how many were held back."""
     now = time.monotonic()
-    last, held = _last.get(key, (-1e18, 0))
+    last, held, held_at = _last.get(key, (-1e18, 0, 0.0))
     if now - last < every_s:
-        _last[key] = (last, held + 1)
+        _last[key] = (last, held + 1, now)
         return
-    _last[key] = (now, 0)
-    if held:
-        msg += f" (and {held} more like it in the last {every_s:.0f} s)"
+    _last[key] = (now, 0, 0.0)
+    if held:  # the held repeats may be hours old: a burst long ago, then quiet
+        msg += f" (and {held} more like it, the last one {now - held_at:.0f} s ago)"
     logger.log(level, msg, *args)

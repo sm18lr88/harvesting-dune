@@ -39,8 +39,12 @@ class GridFit:
     @classmethod
     def from_json(cls, d: object) -> GridFit | None:
         try:
-            fit = cls(**{k: d[k] for k in ("row_a", "row_step", "col_1", "col_step", "samples")})  # type: ignore[index]
-        except (TypeError, KeyError):
+            # learned.json may be hand-edited: only finite numbers make a usable grid
+            nums = [float(d[k]) for k in ("row_a", "row_step", "col_1", "col_step")]  # type: ignore[index]
+            fit = cls(*nums, samples=d["samples"])  # type: ignore[index]
+        except (TypeError, KeyError, ValueError, OverflowError):
+            return None
+        if not all(map(math.isfinite, nums)):
             return None
         return fit if abs(fit.row_step) > 1000 and abs(fit.col_step) > 1000 else None
 
@@ -108,7 +112,8 @@ def _fit_axis(points: list[tuple[int, float]]) -> tuple[float, float] | None:
     in their own cell.
     """
     rough = _line(points)
-    if rough is None or rough[1] == 0:
+    # huge coordinates overflow the sums in _line to inf/NaN
+    if rough is None or rough[1] == 0 or not all(map(math.isfinite, rough)):
         return None
     sign = 1.0 if rough[1] > 0 else -1.0
     by = {}
@@ -121,7 +126,9 @@ def _fit_axis(points: list[tuple[int, float]]) -> tuple[float, float] | None:
             lo = max(by[k]) if sign > 0 else max(by[k + 1])
             hi = min(by[k + 1]) if sign > 0 else min(by[k])
             borders.append((k + 0.5, (lo + hi) / 2))
-    a, b = _line(borders) if len(borders) >= 2 else rough
+    line = _line(borders) if len(borders) >= 2 else None
+    # level border midpoints (mislabelled markers) give a zero step
+    a, b = line if line and line[1] != 0 and all(map(math.isfinite, line)) else rough
 
     def agree(a_: float, b_: float) -> int:
         return sum(1 for k, v in points if _axis_index(v, a_, b_) == k)

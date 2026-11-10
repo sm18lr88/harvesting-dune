@@ -7,6 +7,7 @@ Each value is used once it has LEARN_MIN_SAMPLES samples; until then a default a
 from __future__ import annotations
 
 import logging
+import math
 from pathlib import Path
 
 from .areas import NODE_HARVEST_S
@@ -17,8 +18,28 @@ from .zones import DEFAULT_FIT, GridFit, fit_agreement, fit_grid, is_deep_desert
 log = logging.getLogger(__name__)
 
 LEARN_MIN_SAMPLES = 5
+RESPAWN_MIN_S = 10 * 60
+RESPAWN_MAX_S = 2 * 60 * 60  # a node seen back later than this was not watched: no respawn sighting
 KEEP_SAMPLES = 50
 RECENT_PACE_SAMPLES = 8  # the pace follows your latest mines: solo, a group on a buggy, ... change fast
+
+
+def map_samples(answer: object, world_id: str) -> list | None:
+    """The markers of a bridge answer {map, samples} when that map is this world or one of its
+    layouts (the map window can show another map than the one you are on, as in ships.parse_wrecks);
+    None for any other map and for a bare list from a bridge that names no map."""
+    if not isinstance(answer, dict):
+        return None
+    map_id, samples = answer.get("map"), answer.get("samples")
+    if not isinstance(map_id, str) or not (map_id == world_id or map_id.startswith(world_id + "_")):
+        return None
+    return samples if isinstance(samples, list) else None
+
+
+def _kept(part: str, vals: list) -> list[float]:
+    # older runs stored respawn samples beyond the bound; they would count towards LEARN_MIN_SAMPLES
+    top = RESPAWN_MAX_S if part == "respawn" else math.inf
+    return [float(v) for v in vals if isinstance(v, (int, float)) and not isinstance(v, bool) and v <= top][-KEEP_SAMPLES:]
 
 
 class Learning:
@@ -32,8 +53,7 @@ class Learning:
         d = read_json(self.path, dict, {})
         for part in ("respawn", "pace"):
             got = d.get(part) if isinstance(d.get(part), dict) else {}
-            self.data[part] = {m: [float(v) for v in vals if isinstance(v, (int, float))][-KEEP_SAMPLES:]
-                               for m, vals in got.items() if isinstance(m, str) and isinstance(vals, list)}
+            self.data[part] = {m: _kept(part, vals) for m, vals in got.items() if isinstance(m, str) and isinstance(vals, list)}
         grids = d.get("grids") if isinstance(d.get("grids"), dict) else {}
         self.data["grids"] = {w: g for w, g in grids.items() if GridFit.from_json(g)}
 
@@ -54,7 +74,7 @@ class Learning:
         already back, so an upper bound), else the patch-notes value."""
         seen = sorted(self.data["respawn"].get(marker, []))
         if len(seen) >= LEARN_MIN_SAMPLES:
-            return min(max(seen[len(seen) // 4], 10 * 60), 2 * 60 * 60)
+            return min(max(seen[len(seen) // 4], RESPAWN_MIN_S), RESPAWN_MAX_S)
         return respawn_s(marker)
 
     def node_seconds(self, markers: set[str]) -> float:

@@ -1,23 +1,29 @@
 """Failure handling: crash-safe files, persisted terrain, expiring corrections, hostile input,
 supervised background loops, and the local server's access rules."""
 
+import argparse
 import asyncio
 import json
 import logging
 import shutil
 import socket
 import subprocess
+import sys
 import threading
 import types
+from pathlib import Path
 
 import pytest
-from helpers import CELL_CM, actors, ore, pose, session
+from helpers import CELL_CM, M, actors, ore, payload, pose, session, spice
 
+from harvesting_dune import cli
+from harvesting_dune import journal as journal_mod
 from harvesting_dune import runner as runner_mod
 from harvesting_dune.app import Detector
 from harvesting_dune.corrections import STALE_TTL_S, ScanIndex
 from harvesting_dune.feed import BRIDGE_SCRIPT, CompanionHub, Page
 from harvesting_dune.fsutil import read_json, write_json
+from harvesting_dune.model import BusMessage
 from harvesting_dune.server import _allowed
 from harvesting_dune.terrain import VEHICLES, TerrainGrid
 
@@ -46,6 +52,26 @@ def test_read_json_rejects_wrong_shapes(tmp_path):
     assert read_json(path, dict, {}) == {}
     path.write_text('{"half": ')
     assert read_json(path, dict, "d") == "d"
+
+
+@pytest.mark.parametrize("number", ["NaN", "Infinity", "-Infinity", "1e400", pytest.param("1" + "0" * 400, id="400digits")])
+def test_a_data_file_with_a_number_no_loader_can_use_is_ignored(tmp_path, number):
+    path = tmp_path / "x.json"
+    path.write_text('{"base": [%s, 0]}' % number)
+    assert read_json(path, dict, "d") == "d"
+
+
+def test_member_ids_of_64_bits_still_load(tmp_path):
+    path = tmp_path / "x.json"
+    path.write_text('{"id": %d, "x": -1.5e300}' % (2 ** 63 - 1))
+    assert read_json(path, dict) == {"id": 2 ** 63 - 1, "x": -1.5e300}
+
+
+def test_a_hand_edited_settings_file_with_a_huge_number_never_stops_the_start(tmp_path, caplog):
+    (tmp_path / "settings.json").write_text('{"pvpYield": 4, "bases": {"DD|7": [1%s, 0]}}' % ("0" * 400))
+    det = Detector(None, data_dir=tmp_path)
+    assert det._bases == {} and det.pvp_yield == 2.5  # the whole file is refused, as a cut-off one is
+    assert any("settings.json" in r.getMessage() for r in caplog.records if r.levelno == logging.WARNING)
 
 
 def test_malformed_settings_never_stop_the_detector(tmp_path):
@@ -242,6 +268,10 @@ def fake_list(port):
     raise OSError("refused")  # ...then the companion closes
 feed.list_targets = fake_list
 feed.CompanionHub.__init__.__defaults__ = (0.2,)
+import ctypes
+ctypes.windll.user32.RegisterHotKey = lambda *a: print("registered hotkey", a[1], flush=True) or 0
+from harvesting_dune import hotkeys
+hotkeys.start = lambda *a: None  # global Ctrl+Alt hotkeys belong to this desktop, not to a test
 from harvesting_dune import cli
 real_serve = cli.serve
 async def serve(*a, **k):
@@ -274,9 +304,13 @@ print("exited")
         reader.join(5)
     finally:
         proc.kill()
+        proc.wait()
+        reader.join(5)
+        proc.stdout.close()
         if stream:
             stream.close()
     assert "exited" in "".join(out), "".join(out)[-2000:]
+    assert "registered hotkey" not in "".join(out)  # this desktop's Ctrl+Alt hotkeys stay with their owner
 
 
 def test_an_error_becomes_a_report_on_the_settings_page_and_a_notice_in_the_companion():
@@ -383,6 +417,7 @@ def test_settings_page_is_versioned_and_changes_are_logged(tmp_path, caplog):
                     with urllib.request.urlopen(req, timeout=5) as r:
                         return r.status, r.read()
                 except urllib.error.HTTPError as e:
+                    e.close()
                     return e.code, b""
             page = (await asyncio.to_thread(fetch, "/"))[1].decode()
             state = json.loads((await asyncio.to_thread(fetch, "/state"))[1])
@@ -451,10 +486,13 @@ def test_errors_and_warnings_reach_the_log_files(tmp_path):
 
     from harvesting_dune import logsetup
 
+    root = logging.getLogger()
+    saved, handlers = (sys.excepthook, threading.excepthook, warnings.showwarning, root.level), root.handlers[:]
     try:
         logsetup.setup(tmp_path)
         logging.getLogger("harvesting_dune.test").warning("a warning")
-        warnings.warn("a python warning", stacklevel=1)
+        with warnings.catch_warnings(action="always"):  # shown, so logged, even under -W error
+            warnings.warn("a python warning", stacklevel=1)
         t = threading.Thread(target=lambda: 1 / 0, name="boom")
         t.start()
         t.join()
@@ -475,13 +513,151 @@ def test_errors_and_warnings_reach_the_log_files(tmp_path):
         for _ in range(3):
             logsetup.limited(logging.getLogger("harvesting_dune.test"), "k", "repeating")
     finally:
-        for h in logging.getLogger().handlers:
+        for h in root.handlers:
             h.flush()
+        fed_problems = logsetup.PROBLEMS in root.handlers
+        # setup() rewires the whole process, as a live run needs; later tests get pytest's hooks back
+        for h in [h for h in root.handlers if h not in handlers and h is not logsetup.PROBLEMS]:
+            h.close()
+        root.handlers[:] = handlers
+        root.setLevel(saved[3])
+        logging.captureWarnings(False)
+        sys.excepthook, threading.excepthook = saved[:2]
     errors = (tmp_path / "logs" / "errors.log").read_text("utf8")
     everything = (tmp_path / "logs" / "detector.log").read_text("utf8")
     assert "a warning" in errors and "a python warning" in errors and "thread boom failed" in errors
     assert "ZeroDivisionError" in errors and "unawaited" in errors
     assert errors.count("repeating") == 1  # rate-limited
-    assert logsetup.PROBLEMS in logging.getLogger().handlers  # a live run feeds the settings page's problem list
+    assert fed_problems  # a live run feeds the settings page's problem list
     assert "a warning" in everything
-    logging.basicConfig(force=True, handlers=[logging.StreamHandler()])  # leave other tests as they were
+    assert (sys.excepthook, threading.excepthook, warnings.showwarning, logging.getLogger().level) == saved
+
+
+def test_held_back_repeats_report_their_real_age(monkeypatch, caplog):
+    from harvesting_dune import logsetup
+
+    clock = [1000.0]
+    monkeypatch.setattr(logsetup.time, "monotonic", lambda: clock[0])
+    logger = logging.getLogger("harvesting_dune.test")
+    for t in (1000.0, 1001.0, 1002.0, 1003.0, 8200.0):  # a burst, then the same problem two hours later
+        clock[0] = t
+        logsetup.limited(logger, "old burst", "server down")
+    last = [r.getMessage() for r in caplog.records if r.getMessage().startswith("server down")][-1]
+    assert last == "server down (and 3 more like it, the last one 7197 s ago)"
+
+
+# -- journal and replay --------------------------------------------------------------------------
+def test_a_journal_that_cannot_be_written_never_blinds_the_detector(tmp_path, caplog):
+    (tmp_path / "journals").write_text("a file where the folder should be")
+    det = Detector(tmp_path / "journals", data_dir=tmp_path, min_rescore_s=0)
+    session(det, "DD")
+    for t in (1, 2):
+        pose(det, 5.0 * t, 6.0, t=t)
+    assert det.store.world == ("DD", 7) and det.store.pose.x == 10.0
+    assert len([r for r in caplog.records if r.levelno >= logging.ERROR]) == 1  # one report, then journaling stops
+
+
+def test_odd_raw_stats_shapes_still_reach_vehicle_detection(tmp_path):
+    det = Detector(tmp_path / "journals", data_dir=tmp_path)
+    session(det, "DD", activity="Driving")
+    for t, odd in enumerate(([{"name": "x"}], {"groups": 5}), 1):
+        det.handle(BusMessage("delta", "dune.rawStats", odd), t)
+    det.handle(BusMessage("delta", "dune.rawStats", {"groups": [{"name": 3, "entries": 5},
+                                                                 {"name": "Vehicle: Sandcrawler Mk2", "entries": 5}]}), 3)
+    det.journal.close()
+    assert det.vehicles.current == "sandcrawler"
+
+
+def test_journal_escapes_the_message_type(tmp_path):
+    j = journal_mod.Journal(tmp_path)
+    j.write(1.0, BusMessage('we"ird', "dune.player", {"x": 1.0, "y": 2.0}))
+    j.close()
+    assert [(t, m.type) for t, m in cli._journal_messages(Path(j.path))] == [(1.0, 'we"ird')]
+
+
+def test_replay_skips_a_cut_off_line_and_refuses_a_missing_journal(tmp_path):
+    journal = tmp_path / "j.jsonl"
+    journal.write_text('{"t":1.000,"type":"delta","topic":"dune.player","payload":{"x":1}}\n'
+                       '{"t":2.000,"type":"delta","topic":"dune.pla', encoding="utf8")  # cut off by a hard kill
+    assert [t for t, _ in cli._journal_messages(journal)] == [1.0]
+    with pytest.raises(SystemExit, match="missing.jsonl"):
+        cli._replay(argparse.Namespace(journal=str(tmp_path / "missing.jsonl"), resource="spice", vehicle="auto"))
+
+
+def test_replay_ranks_on_the_journal_clock(tmp_path, capsys):
+    t0 = 1_758_000_000.0  # recorded long ago: ageing on the wall clock would forget every field
+    rows = [(t0, "snapshot", "dune.session", {"worldId": "DD", "coriolisWorldSeed": 7, "mapScanSeed": 7, "worldName": "DD",
+                                             "activity": "Exploration", "characterState": "CharacterState.State.Exploration"}),
+            (t0 + 1, "delta", "dune.player", {"x": 0, "y": 0, "z": 10}),
+            (t0 + 2, "delta", "dune.map.actors", payload(spice("s1", 800 * M, 0, "Large"), spice("s2", -900 * M, 300 * M)))]
+    journal = tmp_path / "j.jsonl"
+    journal.write_text("".join(json.dumps({"t": t, "type": ty, "topic": to, "payload": p}) + "\n" for t, ty, to, p in rows), encoding="utf8")
+    cli._replay(argparse.Namespace(journal=str(journal), resource="spice", vehicle="auto"))
+    assert "\n 1. " in capsys.readouterr().out
+
+
+def test_a_long_run_splits_its_journal_and_each_part_replays_alone(tmp_path, monkeypatch):
+    monkeypatch.setattr(journal_mod, "JOURNAL_PART_BYTES", 300)
+    det = Detector(tmp_path, min_rescore_s=0)
+    session(det, "DD")
+    for t in range(1, 6):
+        pose(det, 100.0 * t, 0.0, t=t)
+    parts = list(tmp_path.glob("*.jsonl"))
+    assert len(parts) > 1 and det.journal_path in {str(p) for p in parts}
+    assert all(json.loads(p.read_text().splitlines()[0])["topic"] == "dune.session" for p in parts)
+
+
+# -- stats -------------------------------------------------------------------------------------
+def _session_row(t, world="DD"):
+    return (t, "snapshot", "dune.session", {"worldId": world, "coriolisWorldSeed": 7, "mapScanSeed": 7, "worldName": world,
+                                            "activity": "Exploration", "characterState": "CharacterState.State.Exploration"})
+
+
+def _actors_row(t, *acts, world="DD"):
+    return (t, "delta", "dune.map.actors", payload(*acts, world=world))
+
+
+def _stats(folder, capsys, *journals):
+    folder.mkdir(exist_ok=True)
+    for i, rows in enumerate(journals):
+        (folder / f"journal-{i}.jsonl").write_text(
+            "".join(json.dumps({"t": t, "type": ty, "topic": to, "payload": p}) + "\n" for t, ty, to, p in rows), encoding="utf8")
+    cli._stats(argparse.Namespace(journal_dir=str(folder)))
+    return capsys.readouterr().out
+
+
+def test_stats_does_not_count_the_load_in_of_a_second_journal(tmp_path, capsys):
+    first = [_session_row(1), (2, "delta", "dune.player", {"x": 0, "y": 0, "z": 10}), _actors_row(3, spice("s1", 300 * M, 0)),
+             _actors_row(4, spice("s1", 300 * M, 0), spice("s2", 500 * M, 0))]
+    second = [_session_row(100), (101, "delta", "dune.player", {"x": 0, "y": 0, "z": 10}), _actors_row(102, spice("s3", 700 * M, 0))]
+    out = _stats(tmp_path / "journals", capsys, first, second)
+    assert "spice fields first observed after load-in: 1\n" in out  # s2 only
+
+
+def test_stats_does_not_take_an_empty_menu_list_for_the_load_in(tmp_path, capsys):
+    rows = [_session_row(1), (2, "delta", "dune.player", {"x": 0, "y": 0, "z": 10}), _actors_row(3, world=None),
+            _actors_row(4, spice("s1", 300 * M, 0)), _actors_row(5, spice("s1", 300 * M, 0), spice("s2", 500 * M, 0))]
+    out = _stats(tmp_path / "journals", capsys, rows)
+    assert "spice fields first observed after load-in: 1\n" in out  # s2 only: s1 came with the load-in
+
+
+def test_stats_does_not_count_the_load_in_after_a_map_change(tmp_path, capsys):
+    rows = [_session_row(1), (2, "delta", "dune.player", {"x": 0, "y": 0, "z": 10}), _actors_row(3, spice("s1", 300 * M, 0)),
+            _session_row(50, world="HB"), (51, "delta", "dune.player", {"x": 0, "y": 0, "z": 10}),
+            _actors_row(52, spice("h1", 400 * M, 0), world="HB"),
+            _actors_row(53, spice("h1", 400 * M, 0), spice("h2", 600 * M, 0), world="HB")]
+    out = _stats(tmp_path / "journals", capsys, rows)
+    assert "spice fields first observed after load-in: 1\n" in out  # h2 only
+
+
+def test_stats_p90_is_never_above_the_maximum(tmp_path, capsys):
+    rows = [_session_row(1), (2, "delta", "dune.player", {"x": 0, "y": 0, "z": 10}), _actors_row(3, spice("s0", 50 * M, 0)),
+            _actors_row(4, spice("s0", 50 * M, 0), spice("s1", 100 * M, 0), spice("s2", 550 * M, 0), spice("s3", 1000 * M, 0))]
+    out = _stats(tmp_path / "journals", capsys, rows)
+    line = next(x for x in out.splitlines() if x.startswith("first-seen distance m:")).split()
+    assert line[-1] == "1000" and float(line[line.index("p90") + 1]) <= 1000
+
+
+def test_stats_refuses_a_folder_without_journals(tmp_path):
+    with pytest.raises(SystemExit, match="no journals in .*missing"):
+        cli._stats(argparse.Namespace(journal_dir=str(tmp_path / "missing")))

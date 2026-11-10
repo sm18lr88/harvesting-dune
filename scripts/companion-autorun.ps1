@@ -68,12 +68,19 @@ function Show-Problem([string]$text) {
 }
 
 function Stop-Detector {
+    # Bounded: a process the watcher cannot end (e.g. started from an elevated console) must not
+    # hold the main loop forever. The companion-gone timer retries later.
     $p = Get-DetectorProcess
-    while ($p) {
+    for ($attempt = 1; $p; $attempt++) {
+        if ($attempt -gt 10) {
+            Write-Log "could not stop pid $($p.ProcessId)"
+            return $false
+        }
         & taskkill.exe /PID $p.ProcessId /T /F *> $null
         Start-Sleep -Milliseconds 300
         $p = Get-DetectorProcess
     }
+    return $true
 }
 
 if ((Test-Path -LiteralPath $logFile) -and (Get-Item -LiteralPath $logFile).Length -gt 1MB) {
@@ -170,12 +177,12 @@ while ($true) {
         $warnedNoFeed = $false
         $startedAt = $null
         $quickDeaths = 0
+        $nextStart = [datetime]::MinValue
         $warnedCrash = $false
         if ($detector) {
             if (-not $goneSince) { $goneSince = Get-Date }
             if (((Get-Date) - $goneSince).TotalSeconds -gt 30) {
-                Stop-Detector
-                Write-Log 'companion closed: detector did not exit by itself, force-stopped'
+                if (Stop-Detector) { Write-Log 'companion closed: detector did not exit by itself, force-stopped' }
                 $goneSince = $null
             }
         } elseif ($goneSince) {

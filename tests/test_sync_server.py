@@ -294,3 +294,39 @@ def test_a_profile_uploaded_before_any_sync_already_claims_its_character(tmp_pat
     assert st.upsert_character(other["id"], sync_body["identity"], now) is False  # the check sits in the write
     assert api.sync(owner, sync_body, "203.0.113.7", now)[0] == 200
     st.close()
+
+
+@pytest.mark.parametrize("field", ["identity.characterName", "records[0].rowKey"])
+def test_a_lone_surrogate_in_a_text_field_is_a_400_naming_it(tmp_path, field):
+    record = {"cls": "ship", "type": "downed", "x": 0.0, "y": 0.0, "z": 0.0, "observedAt": 1794159990.0,
+              "fill": None, "size": None, "rowKey": "s1", "distCm": None}
+    body = {**POLL, "identity": dict(POLL["identity"]), "records": [record]}
+    if field == "identity.characterName":
+        body["identity"]["characterName"] = "Paul \ud800"
+    else:
+        record["rowKey"] = "s\udfff"
+    with running(tmp_path, 1794160000.0) as (port, path):
+        st = Storage.open(str(path))
+        _, token = st.issue_key("Paul Test")
+        st.close()
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        status, reply, _ = call(port, {"method": "POST", "path": "/v1/sync", "headers": headers, "body": body})
+    assert (status, reply.get("field")) == (400, field), reply
+
+
+def test_a_key_revoked_while_its_sync_runs_leaves_its_character_offline(tmp_path):
+    now, group = 1794160000.0, POLL["identity"]["battlegroupId"]
+    st = Storage.open(str(tmp_path / "guild.db"), lambda: now)
+    key_id, _ = st.issue_key("Paul Test")
+    api = Api(st, lambda: now)
+    assert api.sync({"id": key_id}, POLL, "127.0.0.1", now)[0] == 200
+    real = st.upsert_presence
+
+    def revoked_first(*args, **kwargs):  # keysctl commits its revoke between the sync's writes
+        st.revoke_key(key_id, now + 1)
+        return real(*args, **kwargs)
+
+    st.upsert_presence = revoked_first
+    api.sync({"id": key_id}, POLL, "127.0.0.1", now + 1)
+    assert [m["state"] for m in st.presence_for(group, now + 2)] == ["offline"]
+    st.close()

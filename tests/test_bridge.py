@@ -367,6 +367,8 @@ globalThis.window = globalThis; globalThis.chrome = { webview: wv };
 globalThis.location = { pathname: '/dune/minimap' };
 globalThis.document = { readyState: 'loading', getElementById: () => null };
 globalThis.__harvestingDuneEmit = () => {}; globalThis.fetch = async () => new Response('[]');
+let now = 1e9;
+Date.now = () => now;  // the once-a-second rule reads the clock: the test moves it
 eval(SCRIPT);
 let routes = 0;
 wv.addEventListener('message', (e) => { if (e.data.topic === 'dune.map.route') routes++; });
@@ -377,7 +379,8 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 (async () => {
   move(0); await wait(20);            // first pose: anchor + redraw
   move(1000); await wait(20);         // 10 m: too little, and too soon
-  await wait(1050); move(5000); await wait(20);   // 50 m after a second: redraw
+  now += 1100; move(1000); await wait(20);   // a second later, still 10 m: too little
+  now += 1100; move(5000); await wait(20);   // 50 m: redraw
   move(9000); await wait(20);         // moved, but within the same second: wait
   console.log(JSON.stringify({ redraws: routes - base })); process.exit(0);
 })();
@@ -579,6 +582,168 @@ def test_a_map_made_before_a_late_install_is_found_through_its_module(tmp_path):
     assert r["result"] == "native" and r["restored"]  # the page's own call works; everything put back
     assert r["caught"] and r["after"] == "drawn" and r["drawn"] == [2]
     assert r["laterCaught"] and r["maps"] == 2
+
+
+AUDIT = r"""
+const listeners = [], timers = [];
+const wv = { postMessage() {}, addEventListener: (_, f) => listeners.push(f),
+  removeEventListener: (_, f) => { const i = listeners.indexOf(f); if (i >= 0) listeners.splice(i, 1); },
+  dispatchEvent: (e) => { for (const f of [...listeners]) f(e); return true; } };
+globalThis.window = globalThis; globalThis.chrome = { webview: wv };
+globalThis.location = { pathname: '/dune/minimap' };
+globalThis.document = { readyState: READY, getElementById: () => null };
+globalThis.__harvestingDuneEmit = () => {}; globalThis.fetch = async () => new Response('[]');
+// timers run when the case says so: the bridge's short timers yes, the dead-man switch never
+globalThis.setTimeout = (fn, ms) => timers.push([fn, ms || 0]); globalThis.clearTimeout = () => {};
+globalThis.setInterval = () => 0; globalThis.clearInterval = () => {};
+const flush = () => { for (let t; (t = timers.findIndex(([, ms]) => ms < 1000)) >= 0;) timers.splice(t, 1)[0][0](); };
+const page = {};
+const pageListener = () => wv.addEventListener('message', (e) => { const m = e.data; if (m && m.topic) page[m.topic] = m.payload; });
+const native = (topic, payload) => wv.dispatchEvent({ data: { type: 'delta', topic, payload } });
+const ids = () => page['dune.map.actors'].actors.map((a) => a.id);
+// a gtmap map whose only marker matches one world->map transform
+const mkMap = (flip) => {
+  const m = { layers: { createStaticLayer: () => ({ vectors: new Map(), clearVectors() { this.vectors.clear(); }, addPolyline(p) { this.vectors.set(this.vectors.size, p); } }), addLayer() {} },
+              view: { translate: (x, y, tt) => ({ x: x / 100, y: (tt === flip ? -y : y) / 100 }) } };
+  m._createdLayers = [{ _items: new Map([[1, { data: { x: 1000, y: 2000 }, point: { x: 10, y: -20 } }]]) }];
+  return m;
+};
+const PIN = { id: 'a', kind: 'pin', x: 1000, y: 2000, body: { label: 'X' }, mine: true };
+if (READY !== 'loading') pageListener();
+eval(SCRIPT);
+if (READY === 'loading') pageListener();
+const out = (() => { BODY })();
+console.log(JSON.stringify(out)); process.exit(0);
+"""
+
+
+def audit(body: str, loading: bool = False) -> dict:
+    code = AUDIT.replace("SCRIPT", json.dumps(BRIDGE_SCRIPT)).replace("READY", json.dumps("loading" if loading else "complete"))
+    out = subprocess.run(["node", "-"], input=code.replace("BODY", body), capture_output=True, text=True, timeout=30, check=False)
+    assert out.returncode == 0, out.stderr
+    return json.loads(out.stdout.splitlines()[0])
+
+
+@pytest.mark.parametrize("loading", [False, True])
+def test_clearing_extra_actors_takes_ours_off_the_page(loading):
+    r = audit("""
+native('dune.map.actors', { actors: [{ id: 'native' }] });
+__dd.set({ extraActors: [{ id: 'dd-mem-1' }] }); flush();
+const before = ids();
+__dd.set({}); flush();
+return { before, after: ids() };""", loading)
+    assert r == {"before": ["native", "dd-mem-1"], "after": ["native"]}
+
+
+def test_extra_actors_pushed_before_the_first_native_list_leave_the_page_when_cleared():
+    r = audit("""
+__dd.set({ extraActors: [{ id: 'dd-ship-1' }] }); flush();
+native('dune.map.actors', { actors: [{ id: 'native' }] }); flush();
+const before = ids();
+__dd.set({}); flush();
+return { before, after: ids() };""", loading=True)
+    assert r == {"before": ["native", "dd-ship-1"], "after": ["native"]}
+
+
+def test_an_overlay_change_keeps_empty_spawn_points_hidden():
+    r = audit("""
+native('dune.map.actors', { actors: [{ id: 'live' }, { id: 'spawn', spawned: false, fillRate: 0, markerType: 'SpiceField' }] });
+const first = ids();
+__dd.set({ extraActors: [{ id: 'dd-mem-1' }] }); flush();
+return { first, after: ids() };""", loading=True)
+    assert r == {"first": ["live"], "after": ["live", "dd-mem-1"]}
+
+
+def test_leaving_landsraad_route_mode_brings_our_route_back_at_document_start():
+    r = audit("""
+native('dune.landsraad.routeMode', { enabled: true });
+native('dune.map.route', { mapId: 'DD', stops: [{ x: 7 }] });
+__dd.set({ route: { mapId: 'DD', stops: [{ x: 1 }, { x: 2 }] } }); flush();
+native('dune.landsraad.routeMode', { enabled: false }); flush();
+return { mode: page['dune.landsraad.routeMode'], stops: page['dune.map.route'].stops.length, shown: __dd.routeShown };""", loading=True)
+    assert r == {"mode": {"enabled": True}, "stops": 2, "shown": True}
+
+
+def test_destroyed_maps_never_crowd_out_the_live_one():
+    r = audit("""
+for (let i = 0; i < 8; i++) mkMap('flipVertical')._destroyed = true;
+const live = mkMap('flipVertical');
+__dd.pose = { x: 0, y: 0 };
+__dd.set({ objects: [PIN] });
+return { liveTracked: __dd.maps.includes(live), redraw: __dd.redrawAlternatives(true) };""")
+    assert r == {"liveTracked": True, "redraw": "drawn"}
+
+
+def test_a_new_map_is_calibrated_again():
+    r = audit("""
+const a = mkMap('flipVertical');
+__dd.pose = { x: 0, y: 0 };
+__dd.set({ objects: [PIN] });
+__dd.redrawAlternatives(true);
+const first = __dd.altTransform;
+a._destroyed = true;
+mkMap('flipHorizontal');
+const res = __dd.redrawAlternatives(true);
+return { first, second: __dd.altTransform, res };""")
+    assert r == {"first": "flipVertical", "second": "flipHorizontal", "res": "drawn"}
+
+
+def test_world_anchored_rings_and_pins_draw_before_any_player_position():
+    r = audit("""
+mkMap('flipVertical');
+__dd.set({ objects: [PIN], alternatives: [{ x: 1000, y: 2000, kind: 'peer', ring: 4000, color: 'rgba(1,2,3,0.5)', weight: 2 },
+                                          { x: 1000, y: 2000, kind: 'area', color: 'red', weight: 2 }] });
+const res = __dd.redrawAlternatives(true);
+return { pose: __dd.pose, res, rings: [...__dd.altLayer.vectors.values()].filter((p) => p.length === 33).length };""")
+    assert r == {"pose": None, "res": "drawn", "rings": 3}  # peer ring, pin ring, own-pin inner ring; no line
+
+
+def test_grid_samples_skip_destroyed_maps():
+    r = audit("""
+const mk = (cell, x) => { const m = { layers: {}, view: {} }; m._createdLayers = [{ _items: new Map([[1, { data: { gridCell: cell, x, y: 5 } }]]) }]; return m; };
+mk('A1', 111)._destroyed = true;
+mk('K9', 999);
+return { samples: __dd.gridSamples(10) };""")
+    assert r == {"samples": [["K9", 999, 5]]}
+
+
+GRID = r"""
+globalThis.window = globalThis;
+globalThis.chrome = { webview: { postMessage() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent() {} } };
+globalThis.location = { pathname: '/dune' };
+globalThis.document = { readyState: 'complete', getElementById: () => null };
+globalThis.__harvestingDuneEmit = () => {};
+// the page downloaded another map's data file earlier; the newest one is the map it shows now
+Object.defineProperty(globalThis, 'performance', { configurable: true, value: { getEntriesByType: () =>
+  [{ name: 'https://cdn/x/maps/deepdesert_1.d.json' }, { name: 'https://cdn/x/maps/survival_1.d.json?version=1' }] } });
+const raw = [{ gridCell: 1, location: 2 }, 'K9', { x: 3, y: 4 }, 1000, 2000];
+globalThis.fetch = async () => new Response(JSON.stringify(raw));
+eval(SCRIPT);
+(async () => { BODY })().then((r) => { console.log(JSON.stringify(r)); process.exit(0); });
+"""
+
+
+def grid(body: str):
+    code = GRID.replace("SCRIPT", json.dumps(BRIDGE_SCRIPT)).replace("BODY", body)
+    out = subprocess.run(["node", "-"], input=code, capture_output=True, text=True, timeout=30, check=False)
+    assert out.returncode == 0, out.stderr
+    return json.loads(out.stdout.splitlines()[0])
+
+
+def test_grid_samples_from_the_map_file_carry_that_file_map_id():
+    assert grid("return __dd.gridSamplesFromData(10, true);") == {"map": "survival_1", "samples": [["K9", 1000, 2000]]}
+
+
+def test_grid_samples_from_the_live_map_carry_the_map_id_of_the_newest_map_file():
+    r = grid("""
+const m = { layers: {}, view: {} };
+m._createdLayers = [{ _items: new Map([[1, { data: { gridCell: 'B7', x: 111, y: 222 } }]]) }];
+return __dd.gridSamples(10, true);""")
+    assert r == {"map": "survival_1", "samples": [["B7", 111, 222]]}
+
+
+def test_grid_samples_stay_a_bare_list_for_a_caller_that_asks_without_the_map_id():
+    assert grid("return __dd.gridSamplesFromData(10);") == [["K9", 1000, 2000]]
 
 
 def test_our_own_synthetic_destination_is_never_emitted_back():

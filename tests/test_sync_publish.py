@@ -1,14 +1,18 @@
 """What the detector publishes to the guild: strong sightings only, in its partition, once the
 character is known, and never without a key."""
 
+import asyncio
 import json
 from pathlib import Path
 
 from helpers import actors, ore, pose, session, spice
 
+from harvesting_dune import syncloop
 from harvesting_dune.app import Detector
 from harvesting_dune.feed import BusMessage
 from harvesting_dune.peers import PeerMixin
+from harvesting_dune.store import Status
+from harvesting_dune.sync import SyncClient, SyncServerError
 
 FIXTURES = Path(__file__).parent / "fixtures"
 KEY = "gs1_alpha001_Qm9vdHN0cmFwVGVzdEtleUFscGhhMDAx"
@@ -29,8 +33,8 @@ def who(det, **ident):
     det.handle(BusMessage("delta", "dune.trackedSession", ident), 0)
 
 
-def detector(key=KEY, layout=LAYOUT, ident=WHO):
-    det = Detector(None, min_rescore_s=0)
+def detector(key=KEY, layout=LAYOUT, ident=WHO, data_dir=None):
+    det = Detector(None, data_dir=data_dir, min_rescore_s=0)
     if key:
         det.set_sync_key(key)
     session(det, DD)
@@ -210,3 +214,77 @@ def test_a_live_ore_node_is_confirmed_again_every_20_minutes_and_only_then():
     assert det.outbox(10 + 1199)["records"] == []
     assert [r["observedAt"] for r in det.outbox(10 + 1200)["records"]] == [1210]
     assert det.outbox(10 + 1201)["records"] == []
+
+
+def test_a_stale_row_already_published_is_not_sent_again_when_we_come_back_to_its_map(tmp_path):
+    det = detector(data_dir=tmp_path)
+    play(det)
+    assert [r["rowKey"] for r in by_cls(det.outbox(10))["stale"]] == ["BP_Magnetite_A_Spawner_C:400:0"]
+    session(det, "HaggaBasin", t=20)
+    det.outbox(21)
+    session(det, DD, t=30)  # the map's corrections file is read again
+    assert "stale" not in by_cls(det.outbox(31))
+
+
+def test_a_live_ore_node_that_only_left_the_load_range_is_not_sent_again_when_it_loads_again():
+    det = detector()
+    actors(det, ore("iron", 20_000, 0), world=DD, t=2)
+    assert [r["cls"] for r in det.outbox(10)["records"]] == ["ore"]
+    pose(det, 2_000_000, 0, t=20)
+    actors(det, world=DD, t=21)
+    assert [t.status for t in det.store.items.values()] == [Status.OUT_OF_RANGE]
+    det.outbox(22)
+    pose(det, 0, 0, t=30)
+    actors(det, ore("iron", 20_000, 0), world=DD, t=31)
+    assert det.outbox(40)["records"] == []
+
+
+def staged_labels(det):
+    return [u["body"]["label"] for u in det.peers.objects_out if u["ttlS"] > 0]
+
+
+def objects_reply(rows=()):
+    return {"next": 1, "keyState": "valid", "presence": [], "sightings": [], "objects": list(rows)}
+
+
+class PinWhileRefused(SyncClient):
+    """The player drops a second pin while the request with the first one is on the wire; the server
+    then refuses that request for the guild's object cap."""
+
+    def __init__(self, det) -> None:
+        super().__init__(server="https://127.0.0.1:1")
+        self.det = det
+
+    def exchange(self, key, body, path="/v1/sync"):
+        self.det.peers.published_at = 0.0  # the second pin comes after the publish gap
+        self.det.publish_object("pin", {"label": "SECOND"})
+        raise SyncServerError(400, "object-cap objects[0]")
+
+
+def test_a_refusal_drops_only_the_pins_of_the_refused_request():
+    det = detector()
+    det.ingest_peer(objects_reply(), 5.0)  # the server knows objects
+    det.publish_object("pin", {"label": "FIRST"})
+    assert asyncio.run(syncloop._sync(det, PinWhileRefused(det), KEY, syncloop.Pace())) is False
+    assert staged_labels(det) == ["SECOND"]
+
+
+def test_the_guild_cap_counts_the_battlegroups_objects_on_every_map():
+    det = detector()
+    hagga = {"worldId": "survival_1", "layout": "survival_1"}
+    rows = [{"id": f"o{i}", "kind": "pin", "scope": hagga, "geometry": {"type": "point", "x": 1000.0, "y": 0.0, "z": 0.0},
+             "body": {"label": "X"}, "ttlS": 3600, "ageS": 1, "characterId": 2000 + i, "characterName": "Leto Test",
+             "playerTag": f"tag{i}", "rev": i + 1} for i in range(300)]
+    det.ingest_peer(objects_reply(rows), 5.0)
+    assert det.publish_object("pin", {"label": "ONE MORE"}) is None
+    assert staged_labels(det) == [] and "300" in det.peers.objects_note
+
+
+def test_a_stale_row_from_an_earlier_run_is_not_published_again(tmp_path):
+    first = detector(data_dir=tmp_path)
+    play(first)
+    assert "stale" in by_cls(first.outbox(10))
+    det = detector(data_dir=tmp_path)  # the next start reads the map's corrections file
+    pose(det, 0, 0, t=100)
+    actors(det, ore("n0", 0, 0), world=DD, t=101)
+    assert "stale" not in by_cls(det.outbox(110))

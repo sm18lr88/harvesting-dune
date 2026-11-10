@@ -172,7 +172,7 @@
       "post": {
         "operationId": "profile",
         "summary": "Store or delete the caller's character profile",
-        "description": "One row per character id; the same profile again keeps its rev; profile null deletes it. Only the key that owns the character may write it. Safe to retry.",
+        "description": "One row per character id; the same profile again from the same key keeps its rev; profile null deletes it. Only the key that owns the character may write it. Safe to retry.",
         "parameters": [
           {
             "$ref": "#/components/parameters/ClientVersion"

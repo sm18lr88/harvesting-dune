@@ -224,7 +224,7 @@ def test_a_version_5_database_gains_the_objects_table_and_keeps_its_rows(tmp_pat
                    " 'alpha001', 'Alpha Test', '[]', 1)", (BG,))
     db.close()
     st = Storage.open(path)
-    assert st._conn.execute("PRAGMA user_version").fetchone()[0] == len(MIGRATIONS) == 6
+    assert st._conn.execute("PRAGMA user_version").fetchone()[0] == len(MIGRATIONS)
     assert [k["id"] for k in st.list_keys()] == ["alpha001"]
     assert st._conn.execute("SELECT COUNT(*) FROM sightings").fetchone()[0] == 1
     assert st.objects_since(BG, 0, NOW) == ([], None)

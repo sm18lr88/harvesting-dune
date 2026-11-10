@@ -3,9 +3,11 @@
 
 Ages arrive relative to the server's clock and are turned into feed-clock times at merge
 (`seen_at = clock - ageS`), so replays and the live feed age peer rows the same way. Peer rows
-never become ranking nodes, never touch the observation store, the scan index or a file, and a
-peer "stale" row only hides a scan row with two distinct observers, a distance, no actor we see
-live there ourselves, and, for a node that respawns, only until its respawn time has passed.
+never touch the observation store, the scan index or a file, and a peer "stale" row only hides a
+scan row on the map with two distinct observers, a distance, no actor we see live there ourselves,
+and, for a node that respawns, only until its respawn time has passed. The one way into the
+ranking is spice: `peer_spice_reports` hands the guild's active-field and empty-site reports to
+ranking.py, where the newest report of any source decides each site.
 """
 
 from __future__ import annotations
@@ -14,7 +16,7 @@ import logging
 import math
 
 from . import logsetup
-from .catalog import NODE_MARKERS, resource_of
+from .catalog import NODE_MARKERS, SPICE_SIZE, resource_of
 from .corrections import MATCH_CM, stale_ttl_s
 from .datacache import key_id
 from .mined import SAME_NODE_CM
@@ -40,10 +42,16 @@ STATES = ("online", "in_menu", "late", "offline")  # the server's presence state
 RINGED = ("online", "late")  # states drawn on the minimap
 MAX_RINGS, MAX_RINGS_LEAN, MAX_LISTED = 40, 20, 20
 WIRE_CELL_CM = 2000  # the server's sighting key cell (docs/SYNC-PROTOCOL.md)
+MAX_COORD_CM = 1e8  # 1000 km, far past any map: beyond it a distance overflows on rounding
 
 
 def _num(v: object) -> float | None:
     return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) else None
+
+
+def _coord(v: object) -> float | None:
+    n = _num(v)
+    return n if n is not None and abs(n) <= MAX_COORD_CM else None
 
 
 def _skip(kind: str, what: str) -> None:
@@ -62,7 +70,7 @@ def _sighting(row: object) -> dict | None:
     """One wire sighting as stored (still with its ageS and battlegroupId), or None if unusable."""
     if not isinstance(row, dict):
         return None
-    x, y, age, cls = _num(row.get("x")), _num(row.get("y")), _num(row.get("ageS")), row.get("cls")
+    x, y, age, cls = _coord(row.get("x")), _coord(row.get("y")), _num(row.get("ageS")), row.get("cls")
     if x is None or y is None or age is None or cls not in CLASSES or _text(row, "type") is None:
         return None
     observers = row.get("observers")
@@ -89,15 +97,39 @@ def _member(row: object) -> dict | None:
     cid, age = row.get("characterId"), _num(row.get("ageS"))
     if not isinstance(cid, int) or isinstance(cid, bool) or age is None or _text(row, "characterName") is None:
         return None
-    x, y = _num(row.get("x")), _num(row.get("y"))
+    x, y = _coord(row.get("x")), _coord(row.get("y"))
     placed = x is not None and y is not None
     return {"characterId": cid, "characterName": row["characterName"], "battlegroupId": row.get("battlegroupId"),
             "worldId": row.get("worldId"), "layout": row.get("layout"), "ageS": age, "state": _state(row),
+            "next_s": _num(row.get("lastNextS")) or 60.0,
             "x": x if placed else None, "y": y if placed else None, "z": _num(row.get("z")) if placed else None}
 
 
 def _ringed(m: dict) -> bool:
     return m["x"] is not None and m["state"] in RINGED
+
+
+def _shown_state(m: dict, now: float) -> str:
+    """Only the server moves a member off online, so when its answers stop the last state would stay
+    frozen: demote on the feed clock by the heartbeat the member promised (docs "Presence")."""
+    age, promised = now - m["seen_at"], m["next_s"]
+    if m["state"] in RINGED and age > 3 * promised + 20:
+        return "offline"
+    if m["state"] == "online" and age > promised + 20:
+        return "late"
+    return m["state"]
+
+
+def _node_cell(x: float, y: float) -> tuple[int, int]:
+    return math.floor(x / SAME_NODE_CM), math.floor(y / SAME_NODE_CM)
+
+
+def _node_index(seen: list) -> dict:
+    """(marker, cell) -> loaded actors, so each guild ore row looks only at its neighbourhood."""
+    index = {}
+    for a in seen:
+        index.setdefault((a.marker, *_node_cell(a.x, a.y)), []).append(a)
+    return index
 
 
 def _rings(members: dict) -> dict:
@@ -190,13 +222,14 @@ class PeerViewMixin:
         here = self._peer_here()
         return [s for s in self.peers.sightings.values() if (s["worldId"], s["layout"]) == here]
 
-    def _ore_ours(self, s: dict, seen: list) -> bool:
+    def _ore_ours(self, s: dict, seen: dict) -> bool:
         """Our own companion covers this node: it marks it live itself, or we saw it gone or mined it."""
+        cx, cy = _node_cell(s["x"], s["y"])
+        near = (a for i in (-1, 0, 1) for j in (-1, 0, 1) for a in seen.get((s["type"], cx + i, cy + j), ()))
         return self.mined_nodes.is_mined(s["type"], s["x"], s["y"]) or any(
-            a.marker == s["type"] and abs(a.x - s["x"]) <= SAME_NODE_CM and abs(a.y - s["y"]) <= SAME_NODE_CM
-            for a in seen)
+            abs(a.x - s["x"]) <= SAME_NODE_CM and abs(a.y - s["y"]) <= SAME_NODE_CM for a in near)
 
-    def _shows_peer_ring(self, s: dict, mine: set, seen: list) -> bool:
+    def _shows_peer_ring(self, s: dict, mine: set, seen: dict) -> bool:
         """A guild ring adds something: not our own row sent back by the server (a find only our key
         reported is already on our map), and not an ore node our own companion already covers."""
         if s["cls"] not in RINGS or s["observers"] == mine:
@@ -214,7 +247,7 @@ class PeerViewMixin:
     def _sighting_rings(self) -> list[dict]:
         """Rings for the guild's shared finds here that add something to our own map, faded by age."""
         out, mine = [], {key_id(self.sync_key)}
-        seen = [t.actor for t in self.store.items.values() if t.status is not Status.OUT_OF_RANGE]
+        seen = _node_index([t.actor for t in self.store.items.values() if t.status is not Status.OUT_OF_RANGE])
         for s in self._here_sightings():
             if self._shows_peer_ring(s, mine, seen):
                 ring, colour = RINGS[s["cls"]]
@@ -230,14 +263,28 @@ class PeerViewMixin:
         out = self._sighting_rings()
         here, me = self._peer_here(), self.identity.get("characterId")
         for cid, m in self.peers.members.items():
-            if cid == me or cid in self.sync_hidden_members or not _ringed(m) or (m["worldId"], m["layout"]) != here:
+            state = _shown_state(m, self.clock)
+            if (cid == me or cid in self.sync_hidden_members or m["x"] is None or state not in RINGED
+                    or (m["worldId"], m["layout"]) != here):
                 continue
             # online: full; late: faded further as its last position ages
-            alpha = 0.75 if m["state"] == "online" else round(_alpha(self.clock - m["seen_at"], MEMBER_TTL_S) / 2, 2)
+            alpha = 0.75 if state == "online" else round(_alpha(self.clock - m["seen_at"], MEMBER_TTL_S) / 2, 2)
             out.append({"x": m["x"], "y": m["y"], "size": None, "kind": "member", "ring": MEMBER_RING[0],
                         "color": MEMBER_RING[1].format(alpha), "weight": 2, "seen_at": m["seen_at"]})
         marks = self._nearest(out, MAX_RINGS_LEAN if self.lean else MAX_RINGS)
         return [{k: v for k, v in d.items() if k != "seen_at"} for d in marks]
+
+    def peer_spice_reports(self) -> list[dict]:
+        """The guild's spice reports here, for the ranking: an active field (a live field or a blow) or
+        an empty site (a scan row someone confirmed not spawned). Rows only our own key reported are
+        left out: our own companion's data is in the store already."""
+        mine = {key_id(self.sync_key)}
+        return [{"marker": s["type"], "x": s["x"], "y": s["y"], "z": s["z"], "t": s["seen_at"],
+                 "active": s["cls"] != "stale", "row_key": s["rowKey"],
+                 "fill": s["fill"] if s["fill"] is not None and 0 <= s["fill"] <= 1 else None}  # never trust a value
+                for s in self._here_sightings()
+                if s["type"] in SPICE_SIZE and s["observers"] != mine
+                and (s["cls"] in ("spice", "blow") or (s["cls"] == "stale" and s["rowKey"] is not None))]
 
     def peer_stale_keys(self) -> set[str]:
         """Scan rows the guild confirmed gone: two distinct observers, a distance, nothing live here,
@@ -262,7 +309,7 @@ class PeerViewMixin:
             out.append({"characterId": me, "name": self.identity["characterName"], "worldId": here[0] if here else None,
                         "sector": None, "ageS": 0, "distanceM": None, "self": True, "shown": True, "state": "you"})
         order = sorted(((cid, m) for cid, m in self.peers.members.items() if cid != me),
-                       key=lambda kv: (STATES.index(kv[1]["state"]), kv[1]["characterName"].lower()))
+                       key=lambda kv: (STATES.index(_shown_state(kv[1], self.clock)), kv[1]["characterName"].lower()))
         for cid, m in order:
             placed = m["x"] is not None
             fit = self.learning.grid_fit(m["worldId"]) or DEFAULT_FIT
@@ -272,7 +319,7 @@ class PeerViewMixin:
                 "sector": cell_name(m["x"], m["y"], fit) if placed and is_deep_desert(m["worldId"]) else None,
                 "ageS": round(self.clock - m["seen_at"]),
                 "distanceM": round(pose.dist2d(m["x"], m["y"]) / 100) if near else None,
-                "self": False, "shown": cid not in self.sync_hidden_members, "state": m["state"],
+                "self": False, "shown": cid not in self.sync_hidden_members, "state": _shown_state(m, self.clock),
             })
         return out
 

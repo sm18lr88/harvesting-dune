@@ -42,7 +42,7 @@ class PeerStore:
     sightings: dict = field(default_factory=dict)
     outbox: dict = field(default_factory=dict)  # (cls, type, cell x, cell y) -> record, until outbox() sends it
     outbox_world: tuple | None = None  # notes belong to the world they were seen in
-    stale_sent: set = field(default_factory=set)  # scan row keys already published as stale
+    stale_sent: dict = field(default_factory=dict)  # scan world -> row keys already published as stale there
     ore_sent: dict = field(default_factory=dict)  # (marker, cell x, cell y) -> (x, y, sent at) of the live node published there
     since: int = 0
     last_partition: dict | None = None  # where this identity last published: the heartbeat's place in menus
@@ -53,6 +53,8 @@ class PeerStore:
     objects_note: str | None = None  # why the last publish was refused, for the settings page
     my_tag: str | None = None  # our playerTag, learned from the first echoed own object
     published_at: float = 0.0  # wall clock of the last staged publish
+    objects_asked: set | None = None  # ids of the last objects_upload(): the request a refusal is about
+    epoch: int = 0  # moves when the identity ends or the key changes: a reply to an earlier request is stale
 
 
 class PeerMixin(PeerViewMixin, ObjectsMixin):
@@ -66,6 +68,7 @@ class PeerMixin(PeerViewMixin, ObjectsMixin):
         if key != self.sync_key:
             self.key_checked_at, self.key_error = None, None  # gate.py: a new key needs its own check
             self.objects_reset()
+            self._forget_received()  # another guild's finds, or our own echoed rows under a new key id
         self.sync_key = key or None
         self.peers.key_state = "unknown" if key else "none"
         self.peers.connected_as = None
@@ -93,6 +96,15 @@ class PeerMixin(PeerViewMixin, ObjectsMixin):
         p.outbox.clear()
         p.connected_as, p.since, p.last_partition = None, 0, None
         self.objects_reset()
+        self._forget_received()  # the next character may play on another battlegroup
+
+    def _forget_received(self) -> None:
+        """Received rows were filtered for the old identity and key; they can't be filtered again later."""
+        p = self.peers
+        p.epoch += 1
+        p.sightings.clear()
+        p.members.clear()
+        self._changed()
 
     # -- publishing --------------------------------------------------------------------------
     def peer_note(self, cls: str, marker: str, x: float, y: float, z: float, now: float,
@@ -144,7 +156,7 @@ class PeerMixin(PeerViewMixin, ObjectsMixin):
         for k, r in queued:
             if id(r) in sent:
                 del self.peers.outbox[k]
-        self.peers.stale_sent.update(k for k, r in stale if id(r) in sent)
+        self._stale_sent_here().update(k for k, r in stale if id(r) in sent)
         self._ore_published(records, now)
         return {
             "identity": who,
@@ -168,36 +180,53 @@ class PeerMixin(PeerViewMixin, ObjectsMixin):
     def _live_spice(self, now: float) -> list[dict]:
         return [
             {"cls": "spice", "type": a.marker, "x": a.x, "y": a.y, "z": a.z, "observedAt": now,
-             "fill": a.fill_rate, "size": a.spice_size, "rowKey": None, "distCm": None}
+             "fill": a.fill_rate if a.fill_rate is not None and 0 <= a.fill_rate <= 1 else None, "size": a.spice_size, "rowKey": None, "distCm": None}
             for t in self.store.items.values()
             if (a := t.actor).is_spice_field and t.status is Status.LIVE and a.marker not in NEVER_TARGET
         ]
 
     def _new_ore(self, now: float) -> list[dict]:
         """Live ore, crystal and stone nodes (one per 20 m cell) that changed since we published that
-        cell (newly live, live again after it went missing, another node in the cell), or that were
-        last published ORE_REFRESH_S ago and are still there."""
-        live = {_ore_cell(a.marker, a.x, a.y): a
-                for t in self.store.items.values() if t.status is Status.LIVE and (a := t.actor).marker in ORE_MARKERS}
+        cell (newly live, live again after it was seen gone, another node in the cell), or that were
+        last published ORE_REFRESH_S ago and are still there. A node that only left the load range is
+        not gone, so loading it again is no news."""
+        live, away = self._ore_nodes(Status.LIVE), self._ore_nodes(Status.OUT_OF_RANGE)
         sent = self.peers.ore_sent
         self.peers.ore_sent = {k: s for k, s in sent.items()
-                               if k in live and (live[k].x, live[k].y) == s[:2] and now - s[2] < ORE_REFRESH_S}
+                               if now - s[2] < ORE_REFRESH_S and (n := live.get(k) or away.get(k)) and (n.x, n.y) == s[:2]}
         return [{"cls": "ore", "type": a.marker, "x": a.x, "y": a.y, "z": a.z, "observedAt": now,
                  "fill": None, "size": None, "rowKey": None, "distCm": None}
                 for k, a in live.items() if k not in self.peers.ore_sent]
 
+    def _ore_nodes(self, status: Status) -> dict:
+        """(marker, cell x, cell y) -> the actor of an ore node in that state, one per 20 m cell."""
+        return {_ore_cell(a.marker, a.x, a.y): a
+                for t in self.store.items.values() if t.status is status and (a := t.actor).marker in ORE_MARKERS}
+
     def _ore_published(self, sent: list[dict], now: float) -> None:
         self.peers.ore_sent.update((_ore_cell(r["type"], r["x"], r["y"]), (r["x"], r["y"], now)) for r in sent if r["cls"] == "ore")
+
+    def _stale_sent_here(self) -> set:
+        """Keys of this map's stale rows already published. Each map keeps its own, as every entry
+        reads the map's corrections file again. On a map's first sight in this process, the rows
+        confirmed before this visit's first snapshot came from that file: they went out in an earlier
+        run (or never could), and sending them now would carry no distance or be past their lifetime."""
+        sent, world = self.peers.stale_sent, self.scan.world
+        if world not in sent:
+            entered = min((t.first_seen for t in self.store.items.values()), default=self.clock)
+            sent[world] = {k for k, v in self.scan.stale.items() if v["confirmedAt"] < entered}
+        return sent[world]
 
     def _new_stale(self) -> list[tuple[str, dict]]:
         """Scan rows confirmed stale since they were last published. The distance is measured now,
         not at confirmation (the row does not keep it): at most one sync period later."""
         stale, pose = self.scan.stale, self.store.pose
-        self.peers.stale_sent &= stale.keys()  # a row that comes back and goes stale again is news
+        sent = self._stale_sent_here()
+        sent &= stale.keys()  # a row that comes back and goes stale again is news
         out = []
         for key, row in stale.items():
             marker = marker_of(*(v for v in (row.get("sprite"), row.get("type")) if isinstance(v, str)))
-            if key in self.peers.stale_sent or marker is None:
+            if key in sent or marker is None:
                 continue
             out.append((key, {"cls": "stale", "type": marker, "x": row["x"], "y": row["y"], "z": row["z"],
                               "observedAt": row["confirmedAt"], "fill": None, "size": None, "rowKey": key,

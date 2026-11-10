@@ -45,6 +45,8 @@ class PresenceStoreMixin:
         """`position` None means the member does not share it: x, y, z and observed_at stay NULL."""
         pos = position or {}
         with self._tx() as c:
+            if self.revoked_since_check(c, key_id):  # the revoke already set left_at; a heartbeat must not clear it
+                return
             c.execute(
                 "INSERT OR REPLACE INTO presence(character_id, key_id, name, battlegroup, world, layout,"
                 " x, y, z, observed_at, received_at, lag, next_s, in_game, left_at)"

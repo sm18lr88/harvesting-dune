@@ -9,9 +9,13 @@ companion pages, hotkeys and the settings page. Its behaviour is split by reason
     ranking.py     candidates, ranking, hotspot, zones
     outputs.py     what the companion shows (the bridge contract)
     statuspage.py  what the settings page shows (the viewer contract)
+    peers.py       guild sync: what we publish and what the guild shared (with peerview.py, objects.py)
+    characters.py  our shared character profile and the guild's
+    farm.py        the farm route mode
+    gate.py        works only with a guild key the server accepted in the last 72 hours
 
 Each data file has one writer: settings.py, learning.py, mined.py, worldfiles.py, journal.py,
-corrections.py (stale scan rows) and loot.py.
+corrections.py (stale scan rows), loot.py, itemsources.py, routes.py and datacache.py.
 """
 
 from __future__ import annotations
@@ -71,10 +75,12 @@ class Detector(IngestMixin, ControlsMixin, RankingMixin, OutputsMixin, StatusPag
         self.scan = ScanIndex(data_dir, ttl_for=self.respawn_for)
         self.loot = LootIndex(data_dir)
         self.ships = DownedShips()  # crashed ships seen on this map, until a worm takes them
+        self._ships_world: tuple | None = None  # the last real world: a loading screen reports none
         self.shipwrecks: dict[tuple, list[tuple[str, float, float, float]]] = {}  # world -> named wrecks (name, x, y, z)
         self.map_files: dict[tuple, str] = {}  # world -> the companion's map file ("deepdesert_1_01": the layout)
         # feed state
         self._session_world: tuple | None = None
+        self._seeded_world: tuple | None = None  # the last world entered with its seed (ingest._world_key)
         self.world_name: str | None = None
         self.activity: str | None = None
         self.character_state: str | None = None
@@ -181,13 +187,18 @@ class Detector(IngestMixin, ControlsMixin, RankingMixin, OutputsMixin, StatusPag
     def _enter_world(self, world: tuple) -> None:
         if self.store.set_world(*world):
             log.info("world changed to %s", world)
-            self.ships.reset()
-            self.areas = []
-            self.hotspot = None
+            self._drop_ranking()  # not _restart_ranking: a new world keeps min_rescore_s
             self._last_pose_t = None
             self._scored_key = None
             self.publish_rev += 1
             self.sync_wake()  # the guild sees us in the new world at once
+        if world[0] is not None:
+            if world[1] is not None:
+                self._seeded_world = world
+            if self._ships_world not in (None, world):
+                self.ships.reset()  # only another world forgets them, not a respawn's loading screen
+                self.ship_alert = None
+            self._ships_world = world
         self.scan.set_world(world)
         if not self.blows or self._blows_world != world:
             self._blows_world = world

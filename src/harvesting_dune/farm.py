@@ -33,15 +33,17 @@ class FarmMixin:
         self.routes: list[Route] = []  # from the server's routes dataset (gate.on_dataset)
         self.farm: FarmRun | None = None
         self.farm_done = DoneTimes(self.data_dir)
+        self._farm_text: str | None = None  # the badge text last marked for a push
 
     # -- actions ------------------------------------------------------------------------------------
-    def farm_action(self, action: str, value: str | None) -> None:
+    def farm_action(self, action: str, value: str | None) -> bool:
+        """False for an unknown route or action, or one that needs a run while none is on."""
         run = self.farm
         match action:
             case "route_start":
                 route = next((r for r in self.routes if r.id == value), None)
                 if route is None:
-                    return
+                    return False
                 self.farm = FarmRun.start(route, self._farm_stops, self.farm_done, self._world_id(), self.store.pose)
                 log.info("farm route %s started", route.id)
                 self.farm_observe(self.clock)
@@ -50,10 +52,11 @@ class FarmMixin:
             case "route_skip" if run is not None:
                 run.skip(self.clock)
             case "route_repeat" if run is not None:
-                run.toggle_repeat()
+                run.toggle_repeat(self.clock)
             case _:
-                return
+                return False
         self.publish_rev += 1  # what the companion shows changed; the ranking did not
+        return True
 
     def _world_id(self) -> str | None:
         return self.store.world[0] if self.store.world else None
@@ -73,7 +76,7 @@ class FarmMixin:
     # -- feed -----------------------------------------------------------------------------------------
     def farm_feed(self, msg, now: float) -> None:
         payload = msg.payload if isinstance(msg.payload, dict) else {}
-        if msg.topic == "dune.map.actors" and payload.get("worldId") in (None, self._world_id()) \
+        if msg.topic == "dune.map.actors" and self._world_key(payload)[0] in (None, self._world_id()) \
                 and isinstance(payload.get("actors"), list):
             self.farm_actors(payload["actors"], now)
         if msg.topic in ("dune.session", "dune.player", "dune.map.actors"):
@@ -81,18 +84,26 @@ class FarmMixin:
 
     def farm_observe(self, now: float) -> None:
         run = self.farm
-        changed = run.update(self._world_id(), self.store.pose, now)
+        changed = run.update(self.store.world, self.store.pose, now)
         if run.away_since is not None and now - run.away_since >= AWAY_END_S:
             log.info("farm route %s ended: 10 min outside its maps", run.route.id)
             self.farm, changed = None, True
-        if changed:
+        # the distance and the notice's end change the minimap text while the run's state stays the same
+        text = None if self.farm is None else self.farm_notice() or self.farm_line()
+        if changed or text != self._farm_text:
+            self._farm_text = text
             self.publish_rev += 1
 
     def farm_actors(self, raw: list, now: float) -> None:
-        """Containers the companion shows emptied (hasLoot false) at the current site's stops."""
-        run = self.farm
-        hit = any(run.looted(a["x"], a["y"], now) for a in raw if isinstance(a, dict) and a.get("hasLoot") is False
-                  and isinstance(a.get("x"), (int, float)) and isinstance(a.get("y"), (int, float)))
+        """Containers the companion shows emptied (hasLoot false) or full again (true) at the current site's stops."""
+        run, hit = self.farm, False
+        for a in raw:
+            if not (isinstance(a, dict) and isinstance(a.get("x"), (int, float)) and isinstance(a.get("y"), (int, float))):
+                continue
+            if a.get("hasLoot") is False:
+                hit = run.looted(a["x"], a["y"], now) or hit  # every row: one message can show several chests emptied
+            elif a.get("hasLoot") is True:
+                run.refilled(a["x"], a["y"])
         if hit:
             self.publish_rev += 1
 

@@ -1,7 +1,8 @@
 """The settings page's Guild section, run in Node against a real detector snapshot: status words,
 the roster with its tick boxes, shared finds (live ore too), the Pins block (your own pins with Delete,
 the hotkey label, the drop field), the Characters view, and a key that only ever travels once, in the
-body of POST /sync/key."""
+body of POST /sync/key. Also the key paths of snapshot() and page_state() that the
+open pages read."""
 
 import json
 import shutil
@@ -11,7 +12,7 @@ from pathlib import Path
 from importlib import resources
 
 import pytest
-from helpers import pose, session
+from helpers import CELL_CM, actors, pose, session, spice
 
 from harvesting_dune.app import Detector
 from harvesting_dune.feed import BusMessage
@@ -121,7 +122,7 @@ def test_guild_section_shows_status_roster_and_finds_from_a_real_snapshot(tmp_pa
     assert 'data-gmember="1002" checked' in log["members"]  # shown by default
     assert 'data-gmember="1003"' in log["members"] and 'data-gmember="1003" checked' not in log["members"]  # hidden
     assert "(you)" in log["members"] and 'data-gmember="1001"' not in log["members"]  # you are never drawn
-    assert "fresh" in log["finds"] and "old" in log["finds"] and "downed ship" in log["finds"] and "Leto Test" in log["finds"]
+    assert "fresh" in log["finds"] and "old" in log["finds"] and "Downed ship" in log["finds"] and "Leto Test" in log["finds"]
     assert '<td>Iron Ore · live</td><td class="nw">15 min</td>' in log["finds"]  # its age against the 30 min respawn
     assert log["pause"] is False and log["positions"] is True
     assert log["formHidden"] is True and log["savedHidden"] is False  # a saved key shows only as "key saved"
@@ -357,3 +358,177 @@ def test_roster_and_characters_show_presence_states_grouped_by_player(tmp_path):
     order = ["(you)", head, 'data-char="1002"', 'data-char="1006"', "Stilgar Test", "Leto Test", "Irulan Test"]
     assert [r.index(t) for t in order] == sorted(r.index(t) for t in order)  # you, then online first; no tag: last
     assert not [t for t in owners.values() if t in r]  # the tag itself is never shown
+
+
+def test_a_setting_the_detector_refuses_says_why_instead_of_reload_the_page(tmp_path):
+    det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+    session(det, DD)  # on a map, but the companion sent no position yet
+    assert det.ui("base") is False  # server.py answers 400 for this
+    log = run(det.snapshot(), """
+      globalThis.fetch = async (url) => { calls.push({ url }); return new Response(null, { status: 400 }); };
+      page.render(SNAP);
+      el("base").onclick(); await tick(); await tick();
+      log.saved = el("saved").textContent;
+    """)
+    assert log["saved"].startswith("Not applied") and "Reload" not in log["saved"] and "Ctrl+F5" not in log["saved"]
+
+
+def test_a_finished_crawl_that_found_nothing_is_not_shown_as_building(tmp_path):
+    det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+    raw = json.dumps({"built": time.time() * 1000, "materials": [], "uniques": [], "containers": []})
+    det.loot.ingest_crawl(raw)  # the two calls runner.refresh_loot_index makes
+    det.items.ingest(json.loads(raw))
+    snap = Detector(None, data_dir=tmp_path, min_rescore_s=0).snapshot()  # after a restart: the files load back
+    log = run(snap, """
+      page.render(SNAP);
+      log.browse = el("browse").innerHTML; log.cages = el("cages").innerHTML; log.sum = el("sum-loot").textContent;
+    """)
+    assert "Building" not in log["browse"] and "Building" not in log["cages"] and "building" not in log["sum"]
+
+
+def test_a_profile_update_keeps_the_caret_in_the_schematic_search(tmp_path):
+    det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+    det.set_sync_key(KEY)
+    session(det, DD)
+    det.map_files[det.store.world] = LAYOUT
+    det.handle(BusMessage("delta", "dune.trackedSession", ME), 0)
+    det.ingest_peer({"now": time.time(), "next": 1, "keyState": "valid", "sightings": [],
+                     "presence": [member(1002, "Chani Test", 150000.0, 0.0)]}, time.time())
+
+    def profile(rev, water):
+        prof = {"status": {"worldId": DD, "worldName": "Deep Desert", "activity": "Driving", "inGame": True},
+                "skills": None, "stats": [{"name": "Hydration", "entries": [["WaterCapacity", water]]}],
+                "recipes": [["unique_regis_rifle", 3]], "landsraad": None, "achievements": None, "session": None}
+        det.ingest_profiles({"now": 0, "next": 1, "ids": [1002], "profiles": [
+            {"characterId": 1002, "characterName": "Chani Test", "rev": rev, "ageS": 30, "profile": prof}]}, time.time())
+        return det.snapshot(), det.character_detail(1002)
+
+    snap1, d1 = profile(1, 2500.0)
+    snap2, d2 = profile(2, 2600.0)  # the guildmate's profile changed while we type
+    log = run(snap1, """
+      let cur = D1;
+      globalThis.fetch = async (url) => { calls.push({ url });
+        return url.startsWith("/character?id=1002") ? new Response(JSON.stringify(cur), { status: 200 }) : new Response(null, { status: 204 }); };
+      // like a browser: new markup makes new elements, and the focused one is gone with its focus
+      const fresh = () => { delete els.cRecipeQ; const q = el("cRecipeQ");
+        q.focus = () => { document.activeElement = q; }; q.setSelectionRange = (a, b) => { q.caret = [a, b]; }; };
+      let html = "", rebuilt = 0;
+      Object.defineProperty(el("cDetail"), "innerHTML", { get: () => html, set: (v) => { html = v; rebuilt++; fresh(); document.activeElement = null; } });
+      page.render(SNAP); await tick(); await tick();
+      docListeners.click.forEach((fn) => fn({ target: { closest: (s) => s.includes("tr[data-char]") ? { dataset: { char: "1002" } } : null } }));
+      await tick(); await tick();
+      const q = el("cRecipeQ"); q.value = "regis"; q.selectionStart = q.selectionEnd = 3; q.oninput({ target: q }); q.focus();
+      const before = rebuilt; cur = D2;
+      page.render(SNAP2); await tick(); await tick();
+      log.rebuilt = rebuilt - before; log.focused = document.activeElement === el("cRecipeQ");
+      log.value = el("cRecipeQ").value; log.caret = el("cRecipeQ").caret;
+    """.replace("D1", json.dumps(d1)).replace("D2", json.dumps(d2)).replace("SNAP2", json.dumps(snap2)))
+    assert log["rebuilt"] == 1  # the new profile is shown
+    assert log["focused"] is True and log["value"] == "regis" and log["caret"] == [3, 3]
+
+
+def test_gaming_tools_vendor_price_and_stock_are_escaped(tmp_path):
+    det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+    session(det, DD)
+    det.items.ingest({"built": time.time() * 1000, "materials": [
+        {"id": "x", "name": "Test Part", "categories": ["items/misc", "items/misc/components"],
+         "sold": [["Vendor", 100, 9]], "drops": []}]})
+    assert det.ui("resource", "item:x")
+    snap = det.snapshot()
+    snap["itemInfo"]["vendors"] = [{"name": "Vendor", "price": "<img src=x>", "stock": "<b>9</b>"}]  # crawled data is not typed
+    log = run(snap, """
+      page.render(SNAP);
+      log.info = el("itemInfo").innerHTML;
+    """)
+    assert "&lt;img src=x&gt; Solari" in log["info"] and "&lt;b&gt;9&lt;/b&gt; in stock" in log["info"]
+    assert "<img" not in log["info"] and "<b>" not in log["info"]
+
+
+def test_gaming_tools_cage_drop_amounts_are_escaped(tmp_path):
+    det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+    session(det, DD)
+    snap = det.snapshot()
+    snap["lootIndex"] = {"cages": 1, "builtAt": time.time()}
+    drop = {"name": "Part", "icon": None, "rarity": "rare", "chance": 0.5, "special": False, "schematic": False,
+            "min": "<b>2</b>", "max": "<i>5</i>"}  # crawled data is not typed
+    snap["loot"] = [{"kind": "Rare", "distanceM": 100, "heightM": 0, "known": True, "drops": [drop], "moreDrops": 0,
+                     "bestRarity": "rare", "specialChance": 0}]
+    log = run(snap, """
+      page.render(SNAP);
+      log.cages = el("cages").innerHTML;
+    """)
+    assert "&lt;b&gt;2&lt;/b&gt;&ndash;&lt;i&gt;5&lt;/i&gt;" in log["cages"]
+    assert "<b>" not in log["cages"] and "<i>" not in log["cages"]
+
+
+# Key paths the settings page and bridge.js read: a list element is written '[]'. Frozen from the code before the
+# audit; adding a key passes, renaming or removing one breaks a page that is already open (src/harvesting_dune/AGENTS.md).
+SNAPSHOT_KEYS = (
+    "about", "about.platform", "about.python", "about.version", "activity", "areas", "areas[]", "areas[].detail",
+    "areas[].distance_m", "areas[].expected", "areas[].feasible", "areas[].live", "areas[].nodes", "areas[].reasons",
+    "areas[].reasons[]", "areas[].trip_s", "areas[].x", "areas[].y", "base", "blows", "blows[]", "blows[].ageMin",
+    "blows[].distanceM", "blows[].size", "blows[].t", "blows[].x", "blows[].y", "blows[].z", "characterState", "characters",
+    "characters.rows", "characters.rows[]", "characters.rows[].activity", "characters.rows[].id", "characters.rows[].name",
+    "characters.rows[].player", "characters.rows[].profileAgeS", "characters.rows[].rev", "characters.rows[].seenS",
+    "characters.rows[].self", "characters.rows[].state", "characters.rows[].world", "characters.share",
+    "characters.shareSession", "connected", "detectionRangeM", "enabled", "farm", "farmRoutes", "gate", "gate.open",
+    "gate.reason", "gate.text", "groupOrder", "groupOrder[]", "hotspot", "hotspot.cell", "hotspot.nodes", "hotspot.x",
+    "hotspot.y", "hotspot.zone", "itemGroups", "itemIndex", "itemIndex.builtAt", "itemIndex.items", "itemInfo", "learned",
+    "learned.gridFitted", "learned.paceSamples", "learned.secondsPerNode", "loot", "lootIndex", "lootIndex.builtAt",
+    "lootIndex.cages", "maxKm", "mined", "mined.count", "mined.nextBackMin", "minimap", "minimap.extras", "minimap.extras[]",
+    "minimap.extras[][]", "minimap.items", "minimap.items[]", "minimap.items[][]", "minimap.lines", "minimap.linesActive",
+    "minimap.visibleCount", "peers", "peers.connectedAs", "peers.enabled", "peers.hiddenMembers", "peers.identity",
+    "peers.identity.battlegroupId", "peers.identity.characterName", "peers.keySet", "peers.keyState", "peers.lastError",
+    "peers.lastSyncAgeS", "peers.members", "peers.members[]", "peers.members[].ageS", "peers.members[].characterId",
+    "peers.members[].distanceM", "peers.members[].name", "peers.members[].sector", "peers.members[].self",
+    "peers.members[].shown", "peers.members[].state", "peers.members[].worldId", "peers.needsTracking", "peers.objects",
+    "peers.objects.all", "peers.objects.here", "peers.objects.hotkeyLabel", "peers.objects.mine", "peers.objects.note",
+    "peers.objects.pending", "peers.objects.where", "peers.positions", "peers.server", "peers.sightings", "peers.syncError",
+    "planVehicle", "pose", "pose.x", "pose.y", "pose.z", "problems", "problems.count", "problems.items", "resource",
+    "resources", "resources[]", "resources[][]", "scanRows", "scanStatus", "scoreMs", "ships", "shipsReported", "shipwrecks",
+    "stale", "status", "tracked", "vehicle", "vehicleOverride", "viewers", "world", "worldName", "zones", "zones.here",
+    "zones.lastPveRow", "zones.linesFromRow", "zones.pvpOnly", "zones.pvpYield",
+)
+PAGE_STATE_KEYS = (
+    "alternatives", "alternatives[]", "alternatives[].color", "alternatives[].kind", "alternatives[].size",
+    "alternatives[].weight", "alternatives[].x", "alternatives[].y", "dest", "dest.detail", "dest.hasDestination", "dest.title",
+    "dest.x", "dest.y", "dest.z", "extraActors", "extraActors[]", "extraActors[].actorType", "extraActors[].fillRate",
+    "extraActors[].id", "extraActors[].markerType", "extraActors[].reportable", "extraActors[].resourceItemId",
+    "extraActors[].spawned", "extraActors[].spriteKey", "extraActors[].x", "extraActors[].y", "extraActors[].z", "objects",
+    "problem", "route", "route.mapId", "route.stops", "route.stops[]", "route.stops[].houseName", "route.stops[].x",
+    "route.stops[].y", "route.stops[].z", "stale",
+)
+
+
+def key_paths(obj, prefix="") -> set[str]:
+    if isinstance(obj, list):  # an empty list has no element path: its element keys cannot be checked
+        return set().union(*({prefix + "[]"} | key_paths(v, prefix + "[]") for v in obj))
+    if isinstance(obj, dict):
+        return set().union(*({f"{prefix}.{k}".lstrip(".")} | key_paths(v, f"{prefix}.{k}".lstrip(".")) for k, v in obj.items()))
+    return set()
+
+
+def ranked(tmp_path) -> Detector:
+    """Every list the pages read holds an element: synced guild identity, a pose, a spice blow, a field
+    remembered out of range, and a spice ranking with alternatives."""
+    det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+    det.set_sync_key(KEY)
+    session(det, DD)
+    det.map_files[det.store.world] = LAYOUT
+    det.handle(BusMessage("delta", "dune.trackedSession", ME), 0)
+    pose(det, 10, 0, t=1)
+    large = (spice("L1", 30 * CELL_CM, 0, "Large", fill=0.9), spice("L2", -45 * CELL_CM, 0, "Large", fill=0.7))
+    actors(det, *large, spice("B1", 10 * CELL_CM, 0, "Medium", fill=0, spawned=False),
+           spice("R1", 20 * CELL_CM, 5 * CELL_CM, "Medium", fill=0.7), world=DD, t=1)
+    actors(det, *large, spice("B1", 10 * CELL_CM, 0, "Medium", fill=0.05), world=DD, t=2)  # B1 blows, R1 is left behind
+    det.ui("resource", "spice")
+    det.compute(3)
+    return det
+
+
+def test_snapshot_keeps_every_key_an_open_settings_page_reads(tmp_path):
+    assert sorted(set(SNAPSHOT_KEYS) - key_paths(ranked(tmp_path).snapshot())) == []
+
+
+def test_page_state_keeps_every_key_bridge_js_reads(tmp_path):
+    assert sorted(set(PAGE_STATE_KEYS) - key_paths(ranked(tmp_path).page_state())) == []

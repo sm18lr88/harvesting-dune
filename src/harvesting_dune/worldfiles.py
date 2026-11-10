@@ -34,7 +34,7 @@ class TerrainFiles:
         g = self.grids.get(world)
         if g is None:
             path = self._path(world)
-            g = TerrainGrid.from_json(read_json(path, dict)) if path else TerrainGrid()
+            g = TerrainGrid.from_json(read_json(path, dict, per_value=True)) if path else TerrainGrid()
             if g.cells:
                 log.info("terrain for %s: %s cells learned in earlier sessions", world, len(g.cells))
             self.grids[world] = g
@@ -57,7 +57,7 @@ class TerrainFiles:
 
 
 def blows_path(data_dir: Path | None, world: tuple | None) -> Path | None:
-    if data_dir is None or not world:
+    if data_dir is None or not world or world[0] is None:
         return None
     return data_dir / f"blows-{world[0]}-{world[1]}.json"
 

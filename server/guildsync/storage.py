@@ -1,8 +1,8 @@
 """SQLite store for guild sync: keys, characters, presence, sightings, profiles, audit.
 
 One connection shared by the server threads. Every write runs under one lock in a
-`BEGIN IMMEDIATE` transaction, so the global `rev` counter never repeats. Reads
-return plain dicts with the wire contract's names (docs/SYNC-PROTOCOL.md). `clock` is the
+`BEGIN IMMEDIATE` transaction, so the global `rev` counter never repeats. A reply's reads
+take the same lock (`snapshot`). Reads return plain dicts with the wire contract's names (docs/SYNC-PROTOCOL.md). `clock` is the
 time source for key creation and key expiry; tests inject a fixed one.
 """
 
@@ -13,7 +13,7 @@ from collections.abc import Callable
 from contextlib import contextmanager
 
 from .board import BoardMixin
-from .keystore import KeyStoreMixin
+from .keystore import KeyRevoked, KeyStoreMixin
 from .objectstore import ObjectStoreMixin
 from .presence import PresenceStoreMixin
 from .profilestore import ProfileStoreMixin
@@ -76,6 +76,11 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         " received_at REAL NOT NULL, rev INTEGER NOT NULL, PRIMARY KEY(key_id, id))",
         "CREATE INDEX objects_group ON objects(battlegroup, rev)",
     ),
+    ("CREATE INDEX profiles_key ON profiles(key_id)",),  # the per-key profile cap (profilestore.py) counts by key
+    (  # a profile's ageS counts from its last change; updated_at stays the last upload, which retention needs
+        "ALTER TABLE profiles ADD COLUMN changed_at REAL",
+        "UPDATE profiles SET changed_at = updated_at",
+    ),
 )
 
 
@@ -109,6 +114,14 @@ class Storage(BoardMixin, KeyStoreMixin, PresenceStoreMixin, ProfileStoreMixin, 
                 raise
             self._conn.execute("COMMIT")
 
+    @contextmanager
+    def snapshot(self):
+        """Reads that belong to one reply. On the shared connection a read would otherwise run inside
+        another thread's open write transaction and see its uncommitted rows, or a cursor past rows it
+        did not return."""
+        with self._lock:
+            yield
+
     def migrate(self) -> int:
         """Apply the migrations above `PRAGMA user_version`; return the new version."""
         with self._tx() as c:
@@ -131,9 +144,14 @@ class Storage(BoardMixin, KeyStoreMixin, PresenceStoreMixin, ProfileStoreMixin, 
             (key_id, character_id, character_id),
         ).fetchone() is not None
 
-    def upsert_character(self, key_id: str, identity: dict, now: float) -> bool:
-        """Record that this key plays this character; False (nothing written) when another key owns it."""
+    def upsert_character(self, key_id: str, identity: dict, now: float, objects: tuple[dict, ...] = ()) -> bool:
+        """Record that this key plays this character, and store its object uploads in the same
+        transaction; False (nothing written) when another key owns it. ObjectCap rolls back the
+        character too, so a refused sync claims nothing. KeyRevoked (nothing written) when the key
+        was revoked since the request's key check: its objects would outlive the revoke."""
         with self._tx() as c:
+            if self.revoked_since_check(c, key_id):
+                raise KeyRevoked
             if self.owned_elsewhere(key_id, identity["characterId"]):
                 return False
             c.execute(
@@ -142,6 +160,8 @@ class Storage(BoardMixin, KeyStoreMixin, PresenceStoreMixin, ProfileStoreMixin, 
                 " battlegroup = excluded.battlegroup, last_seen = excluded.last_seen",
                 (key_id, identity["characterId"], identity["characterName"], identity["battlegroupId"], now),
             )
+            if objects:
+                self._put_objects(c, key_id, identity, list(objects), now)
         return True
 
     # audit and retention

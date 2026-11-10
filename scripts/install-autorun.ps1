@@ -25,7 +25,8 @@ $watcher = Join-Path $PSScriptRoot 'companion-autorun.ps1'
 
 if ($Uninstall) {
     $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-    if ($task -and (($task.Actions | Select-Object -First 1).Arguments -notlike "*$watcher*")) {
+    # IndexOf, not -notlike: a path with [ ] would be read as a wildcard class and never match itself
+    if ($task -and ([string]($task.Actions | Select-Object -First 1).Arguments).IndexOf($watcher, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
         # another copy of harvesting-dune owns autorun: removing it would break that copy
         Write-Host 'The autorun task belongs to another copy of harvesting-dune. It stays as it is.'
         return

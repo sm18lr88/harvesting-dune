@@ -80,6 +80,16 @@ def test_when_an_area_is_mined_out_the_target_moves_on_and_says_so():
     assert len(det.mined) == 5
 
 
+def test_the_area_mined_out_notice_shows_for_60_seconds():
+    det = _setup()
+    actors(det, *NEAR, *FAR, t=2)
+    det.compute(2)
+    for k in range(1, 6):  # you mine them one by one; the last one goes at t=3
+        actors(det, *NEAR[k:], *FAR, t=2 + k / 5)
+    det.compute(3)
+    assert det.badge(now=3 + 59).startswith("Area mined out")
+    assert not det.badge(now=3 + 61).startswith("Area mined out")
+
 def test_mining_in_a_sparse_spot_still_counts():
     det = _setup()
     actors(det, *NEAR[:3], t=2)  # only three nodes loaded around you
@@ -133,3 +143,43 @@ def test_a_node_your_partner_takes_nearby_also_counts():
     actors(det, *NEAR, stranger, *FAR, t=3)
     actors(det, *NEAR, *FAR, t=4)
     assert list(det.mined) == ["q"]
+
+
+def test_a_node_back_after_the_clock_expired_it_still_teaches_the_longer_respawn():
+    det = _setup()
+    actors(det, *NEAR, *FAR, t=2)
+    actors(det, NEAR[0], *NEAR[2:], *FAR, t=3)  # n1 mined
+    assert det.expire_mined(3 + respawn_s("stravidiumore") + 1) == 1 and det.mined == {}
+    actors(det, *NEAR, *FAR, t=2403)  # the real respawn took 40 min, longer than the default
+    assert det.learning.data["respawn"]["stravidiumore"] == [2400.0]
+
+
+def test_a_node_mined_a_day_before_a_restart_teaches_no_respawn_time(tmp_path):
+    det = _setup(tmp_path)
+    actors(det, *NEAR, *FAR, t=2)
+    actors(det, NEAR[0], *NEAR[2:], *FAR, t=3)  # n1 mined, written to the file
+    again = _setup(tmp_path)
+    actors(again, *NEAR, *FAR, t=3 + 86_400)  # the next day: back long ago, no time to learn
+    assert again.learning.data.get("respawn", {}).get("stravidiumore") is None
+
+
+def test_a_loading_screen_keeps_the_clock_freed_records():
+    det = _setup()
+    actors(det, *NEAR, *FAR, t=2)
+    actors(det, NEAR[0], *NEAR[2:], *FAR, t=3)  # n1 mined
+    assert det.expire_mined(3 + respawn_s("stravidiumore") + 1) == 1
+    session(det, None, t=2000)  # a respawn's loading screen, back in the same world
+    session(det, "DD", t=2001)
+    actors(det, *NEAR, *FAR, t=2403)
+    assert det.learning.data["respawn"]["stravidiumore"] == [2400.0]
+
+
+def test_a_neighbour_coming_back_is_no_respawn_of_the_node_you_mined():
+    det = _setup()
+    actors(det, *NEAR, *FAR, t=2)
+    actors(det, NEAR[0], *NEAR[2:], *FAR, t=3)  # n1 mined; n0 and n2 stand 4 m from it
+    pose(det, 600_000, 0, t=4)  # you fly off: the patch unloads
+    actors(det, *FAR, t=5)
+    pose(det, 0, 0, t=96)
+    actors(det, NEAR[0], *NEAR[2:], *FAR, t=97)  # the neighbours load again, n1 does not
+    assert list(det.mined) == ["n1"] and not det.learning.data["respawn"]

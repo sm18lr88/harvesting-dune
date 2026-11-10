@@ -234,6 +234,84 @@ def test_route_ends_after_10_min_away_but_not_on_the_way_to_an_instance(tmp_path
     assert det.farm is None and not (det.badge() or "").startswith("Farm route")
 
 
+def own_routes(tmp_path, *routes) -> Detector:
+    det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+    assert det.on_dataset("routes", {"routes": list(routes)})
+    return det
+
+
+def site(name, world, x=None, center=None, weekly=False) -> dict:
+    d = {"name": name, "world": world, "fromItems": weekly,
+         "stops": [] if x is None else [{"x": x, "y": 0, "z": 0, "kind": "chest", "name": f"{name} chest"}]}
+    return d | ({"center": {"x": center, "y": 0, "z": 0}} if center is not None else {})
+
+
+TWO = {"id": "two", "items": ["x"], "resetS": 600,
+       "sites": [site("A", "survival_1", 0, center=0), site("B", "survival_1", 500000, center=500000)]}
+
+
+def test_deep_desert_route_survives_10_min_in_hagga_basin_on_the_way(tmp_path):
+    det = own_routes(tmp_path, {"id": "dd", "items": ["x"], "sites": [site("DD wreck", "deepdesert_1", 100000, center=100000)]})
+    session(det, "survival_1", seed=1, t=1000)
+    det.ui("route_start", "dd")
+    pose(det, 0, 0, t=1601)  # still flying to the Deep Desert exit
+    assert det.farm is not None and det.farm.phase == "travel"
+
+
+def test_skip_moves_on_from_a_weekly_site_with_no_stops_known(tmp_path):
+    det = own_routes(tmp_path, {"id": "w", "items": ["x"], "resetS": 3600, "sites": [
+        site("Weekly", "deepdesert_1", weekly=True), site("Fixed", "deepdesert_1", 0, center=0)]})
+    session(det, "survival_1", seed=1, t=1)  # started away: the dataset's site order
+    det.ui("route_start", "w")
+    session(det, "deepdesert_1", seed=1, t=2)
+    pose(det, 0, 0, t=3)
+    assert det.farm.site.name == "Weekly" and det.farm.stops == ()
+    det.ui("route_skip")
+    assert det.farm.site.name == "Fixed"
+
+
+def test_repeat_turned_on_while_waiting_for_the_next_site_shows_that_sites_stops(tmp_path):
+    det = own_routes(tmp_path, TWO)
+    session(det, "survival_1", seed=1, t=1)
+    det.ui("route_start", "two")
+    pose(det, 0, 0, t=2)
+    det.ui("route_skip")  # A done
+    pose(det, 500000, 0, t=3)
+    det.ui("route_skip")  # B done: both within the reset, wait for A
+    assert det.farm.phase == "wait" and det.farm.site.name == "A"
+    det.ui("route_repeat")
+    pose(det, 0, 0, t=700)  # the wait ends
+    pose(det, 0, 0, t=701)
+    assert [s.name for s in det.farm.stops] == ["A chest"] and det.page_state()["dest"]["x"] == 0
+
+
+def test_repeat_turned_off_while_waiting_to_repeat_moves_on(tmp_path):
+    det = own_routes(tmp_path, TWO)
+    session(det, "survival_1", seed=1, t=1)
+    det.ui("route_start", "two")
+    det.ui("route_repeat")
+    pose(det, 0, 0, t=2)
+    det.ui("route_skip")  # A done: wait to repeat it
+    assert det.farm.phase == "wait" and det.farm.site.name == "A"
+    det.ui("route_repeat")
+    assert det.farm.phase != "wait" and det.farm.site.name == "B"
+
+
+def test_a_new_coriolis_seed_resolves_a_weekly_sites_stops_again(tmp_path):
+    det = own_routes(tmp_path, {"id": "w", "items": ["slag"], "resetS": 3600,
+                                "sites": [site("Row A", "deepdesert_1", weekly=True)]})
+    det.items.by_map = {"week1": {"slag": [(1000.0, 0.0, 0.0, "Basic Container")]},
+                        "week2": {"slag": [(4_000_000.0, 0.0, 0.0, "Basic Container")]}}
+    det._item_map = lambda: {1: "week1", 2: "week2"}[det.store.world[1]]
+    session(det, "deepdesert_1", seed=1, t=1)
+    det.ui("route_start", "w")
+    pose(det, 100, 0, t=2)
+    assert [(s.x, s.y) for s in det.farm.stops] == [(1000.0, 0.0)]
+    session(det, "deepdesert_1", seed=2, t=3)  # the weekly reset: a new layout on the same map
+    pose(det, 4_000_100.0, 0, t=4)
+    assert [(s.x, s.y) for s in det.farm.stops] == [(4_000_000.0, 0.0)] and det.farm.phase == "site"
+
+
 def test_routes_dataset_bad_rows_are_skipped_with_a_warning(caplog):
     good = {"id": "ok", "items": ["x"], "sites": [{"name": "A", "world": "survival_1",
                                                    "stops": [{"x": 1, "y": 2, "z": 3, "kind": "chest"}, {"x": "bad", "y": 2, "kind": "chest"}]}]}
@@ -252,3 +330,123 @@ def test_no_routes_without_the_dataset(tmp_path):
     assert det.farm is None
     assert not det.on_dataset("routes", {"routes": []}) and det.routes == []  # an empty or bad dataset changes nothing
     assert len(datasets(det).routes) == 4  # the fixture loads whole
+
+
+def containers(det: Detector, stops, t: float, has_loot: bool = False) -> None:
+    """One actors message that shows every container at these stops, emptied or with loot."""
+    det.handle(BusMessage("delta", "dune.map.actors", {"gated": False, "worldId": "survival_1", "coriolisWorldSeed": 1, "actors": [
+        {"id": f"c{s['x']}", "actorType": "BP_TemporaryLootContainer_BasicContainer_C", "markerType": "LootContainer",
+         "hasLoot": has_loot, "x": s["x"], "y": s["y"], "z": s["z"]} for s in stops]}), t)
+
+
+def yard(*xs) -> dict:
+    """One Hagga Basin site with a chest at each x, in this order."""
+    return {"id": "yard", "items": ["x"], "resetS": 600, "sites": [{
+        "name": "Yard", "world": "survival_1", "center": {"x": 0, "y": 0, "z": 0},
+        "stops": [{"x": x, "y": 0, "z": 0, "kind": "chest", "name": f"chest {x}"} for x in xs]}]}
+
+
+FOUR = yard(0, 1000, 2000, 3000)  # 10 m apart: nearest-next from x=0 is the dataset order
+
+
+def started(tmp_path, route) -> Detector:
+    det = own_routes(tmp_path, route)
+    session(det, "survival_1", seed=1, t=1)
+    det.ui("route_start", route["id"])
+    return det
+
+
+def test_one_actors_message_closes_every_stop_it_shows_emptied(tmp_path):
+    det = started(tmp_path, FOUR)
+    stops = FOUR["sites"][0]["stops"]
+    pose(det, 0, 0, t=2)  # the order freezes here
+    pose(det, 0, 0, t=2.5)
+    pose(det, 1000, 0, t=3)  # came to the first two chests
+    containers(det, stops[:2], t=4)  # both looted between two actors messages
+    assert det.farm.done == {0, 1}
+
+
+def test_an_emptied_container_closes_only_its_own_stop_not_a_neighbour_84_cm_away(tmp_path):
+    route = yard(0, 84)
+    det = started(tmp_path, route)
+    pose(det, 40, 0, t=2)  # the order freezes here
+    pose(det, 40, 0, t=2.5)  # within 6 m of both chests
+    containers(det, route["sites"][0]["stops"][:1], t=3)
+    assert (det.farm.done, det.farm.next_index) == ({0}, 1)  # the full neighbour is next
+
+
+def test_a_session_message_without_its_coriolis_seed_keeps_the_frozen_order_and_skips(tmp_path):
+    det = started(tmp_path, FOUR)
+    pose(det, 0, 0, t=2)
+    det.ui("route_skip")
+    det.ui("route_skip")
+    frozen = list(det.farm.order)
+    det.handle(BusMessage("snapshot", "dune.session", {"worldId": "survival_1"}), 3)  # after a loading screen
+    session(det, "survival_1", seed=1, t=4)  # the same seed, 3 s later
+    pose(det, 3000, 0, t=5)  # now standing at the far end of the site
+    assert (det.farm.order, det.farm.done) == (frozen, set(frozen[:2]))
+
+
+def test_time_on_the_overland_map_on_the_way_to_an_instance_does_not_end_the_run(tmp_path):
+    det = own_routes(tmp_path, {"id": "inst", "items": ["x"], "sites": [site("Station", "dungeon_1", 0, center=0)]})
+    session(det, "survival_1", seed=1, t=1)
+    det.ui("route_start", "inst")
+    session(det, "overmap", seed=1, t=2)
+    pose(det, 0, 0, t=3)
+    pose(det, 0, 0, t=2 + 700)  # 11 minutes over the overland map
+    assert det.farm is not None and det.farm.phase == "travel"
+
+
+def test_the_minimap_text_is_pushed_again_when_the_distance_to_the_stop_changes(tmp_path):
+    det = started(tmp_path, FOUR)
+    pose(det, 0, 0, t=2)
+    rev = det.publish_rev
+    pose(det, -20000, 0, t=3)  # 200 m from the same next stop
+    assert det.publish_rev > rev
+
+
+def test_the_minimap_text_is_pushed_again_when_the_site_done_notice_runs_out(tmp_path):
+    det = started(tmp_path, TWO)
+    pose(det, 0, 0, t=2)
+    det.ui("route_skip")  # A done: the notice shows
+    rev = det.publish_rev
+    pose(det, 0, 0, t=2 + 121)  # same place, after the notice's 120 s
+    assert det.publish_rev > rev
+
+
+def test_a_stop_that_shows_loot_again_is_not_done_when_you_reach_it(tmp_path):
+    det = started(tmp_path, FOUR)
+    stops = FOUR["sites"][0]["stops"]
+    pose(det, 0, 0, t=2)
+    containers(det, stops[1:2], t=3)  # shown emptied while you are 10 m away ...
+    containers(det, stops[1:2], t=4, has_loot=True)  # ... then full again
+    pose(det, 1000, 0, t=5)
+    assert 1 not in det.farm.done
+
+
+def test_a_late_emptied_report_during_the_repeat_wait_does_not_restart_the_wait(tmp_path):
+    det = started(tmp_path, TWO)
+    det.ui("route_repeat")
+    pose(det, 0, 0, t=2)
+    det.ui("route_skip")  # A's only chest closed with Next stop at t=2: repeat at 2 + resetS
+    containers(det, TWO["sites"][0]["stops"], t=100)
+    assert det.farm.wait_until == 2 + TWO["resetS"]
+
+
+def test_a_routes_row_with_non_list_sources_loads_without_sources():
+    row = {"id": "s", "items": ["x"], "sources": 5, "sites": [site("A", "survival_1", 0)]}
+    assert [(r.id, r.sources) for r in parse_routes({"routes": [row]})] == [("s", ())]
+
+
+def test_a_400_digit_number_in_a_routes_row_is_skipped_not_raised():
+    big = 10 ** 400
+    row = {"id": "b", "items": ["x"], "resetS": big, "sites": [{"name": "A", "world": "survival_1", "stops": [
+        {"x": big, "y": 0, "kind": "chest"}, {"x": 1, "y": 2, "kind": "chest"}]}]}
+    routes = parse_routes({"routes": [row]})
+    assert [(r.reset_s, [(s.x, s.y) for s in r.sites[0].stops]) for r in routes] == [(None, [(1.0, 2.0)])]
+
+
+def test_an_unknown_route_or_a_route_action_without_a_run_is_refused(tmp_path):
+    det = own_routes(tmp_path, TWO)
+    assert det.ui("route_start", "no-such-route") is False
+    assert det.ui("route_skip") is False and det.ui("route_start", "two") is True

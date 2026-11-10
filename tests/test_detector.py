@@ -1,12 +1,15 @@
 import json
 from pathlib import Path
 
-from helpers import CELL_CM, actors, ore, pose, session, spice
+import pytest
+from helpers import CELL_CM, M, actors, ore, pose, session, spice
 
 from harvesting_dune.app import Detector
+from harvesting_dune.cli import _LoadIn
 from harvesting_dune.corrections import ScanIndex, row_key
 from harvesting_dune.feed import BusMessage
 from harvesting_dune.model import Pose, parse_actors
+from harvesting_dune.sync import SyncClient, SyncServerError
 from harvesting_dune.vehicle import VehicleDetector
 
 
@@ -72,6 +75,13 @@ R150 = lambda _marker: 15000.0
 ROW = {"type": "SpiceField", "map_marker_id": "spicefieldlarge", "x": 50000.7, "y": 1000.2, "z": 0, "metadata": {"fillRate": 0.9}}
 
 
+def test_scan_rows_whose_marker_fields_are_not_text_are_skipped(tmp_path):
+    idx = ScanIndex(tmp_path)
+    idx.set_world(("DD", 7))
+    idx.load_rows([ROW, {**ROW, "map_marker_id": 5, "x": 90000.0}, {**ROW, "map_marker_id": None, "type": 7, "x": 80000.0}], 200, 0)
+    assert [row_key(r) for r in idx.rows] == [row_key(ROW)]
+
+
 def test_scan_row_confirmed_stale_only_after_repeated_absence_nearby(tmp_path):
     idx = ScanIndex(tmp_path)
     idx.set_world(("DD", 7))
@@ -109,6 +119,118 @@ def test_not_spawned_actor_marks_row_stale_and_respawn_restores_it(tmp_path):
     assert idx.overlay_actors(near) == []  # spice: the stale row is removed, not greyed out
     alive = parse_actors({"actors": [spice(9, 50100, 1100, "Large")]})
     assert idx.observe(near, alive, 20, R150) and not idx.stale
+
+
+ORE_ROW = {"type": "MagnetiteOre", "map_marker_id": "magnetiteore", "x": 1000.0, "y": 0.0, "z": 0}
+
+
+def test_absence_counts_only_consecutive_snapshots_in_range():
+    idx = ScanIndex(None)
+    idx.load_rows([ORE_ROW], 200, 0)
+    near, far = Pose(0, 0, 0), Pose(900000, 0, 0)
+    idx.observe(near, [], 0, R150)
+    idx.observe(near, [], 3, R150)  # a fly-by before the node loaded
+    idx.observe(far, [], 20, R150)
+    assert not idx.observe(near, [], 3600, R150) and not idx.stale  # one snapshot on a later visit
+
+
+def test_unstaling_a_row_the_page_already_hid_asks_for_a_reload():
+    idx = ScanIndex(None)
+    idx.load_rows([ORE_ROW], 200, 0)
+    near = Pose(0, 0, 0)
+    for t in (0, 3, 7):
+        idx.observe(near, [], t, R150)
+    idx.mark_refreshed()
+    assert not idx.refresh_pending
+    alive = parse_actors({"actors": [ore("o1", 1000.0, 0.0)]})
+    assert idx.observe(near, alive, 100, R150) and not idx.stale
+    assert idx.refresh_pending
+
+
+def test_corrections_file_with_non_text_sprite_still_draws_the_overlay(tmp_path):
+    entry = {"x": 1, "y": 2, "z": 0, "confirmedAt": 0}
+    data = {"MagnetiteOre:1:2": {**entry, "sprite": 7}, "MagnetiteOre:3:4": {**entry, "type": [1]}}
+    (tmp_path / "corrections-DD-7.json").write_text(json.dumps(data))
+    det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+    session(det, "DD", t=0)
+    assert len(det.scan.stale) == 2  # kept: they still hide their rows until they expire
+    assert len(det.scan.overlay_actors(None)) == 2
+    det.page_state()
+
+
+STRAV_ROW = {"type": "BP_Stravidium_A_Spawner_C", "map_marker_id": "stravidiumore", "x": 10000.0, "y": 0.0, "z": 0}
+
+
+def test_a_mined_node_in_a_cluster_keeps_its_row_hidden_while_its_neighbours_stay(tmp_path):
+    det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+    det.store.saved_ranges = {"DD": {"stravidiumore": 600 * M}}
+    session(det, "DD")
+    pose(det, 10400, 500, t=1)  # 5 m from the node you mine
+    rows = [{**STRAV_ROW, "x": 10000.0 + 400 * i} for i in range(5)]  # nodes 4 m apart, each with its own row
+    nodes = [ore(f"n{i}", r["x"], 0, marker="StravidiumOre") for i, r in enumerate(rows)]
+    det.load_scan(rows, 200, 1)
+    actors(det, *nodes, t=2)
+    actors(det, nodes[0], *nodes[2:], t=3)  # n1 vanished next to you: you mined it
+    assert det.scan.stale[row_key(rows[1])]["reason"] == "mined"
+    actors(det, nodes[0], *nodes[2:], t=5.5)  # the next list, unchanged
+    assert row_key(rows[1]) in det.scan.stale
+
+
+def spice_rows_on_dormant_sites(n, x0=100000.0, step=20000.0):
+    rows = [{"type": "BP_SpiceField_Small_C", "map_marker_id": "spicefieldsmall", "x": x0 + step * i, "y": 0.0, "z": 0}
+            for i in range(n)]
+    dead = parse_actors({"actors": [spice(f"s{i}", r["x"], r["y"], "Small", fill=0, spawned=False) for i, r in enumerate(rows)]})
+    return rows, dead
+
+
+def test_many_rows_the_game_reports_not_spawned_are_all_removed_without_a_learned_range():
+    rows, dead = spice_rows_on_dormant_sites(25)
+    idx = ScanIndex(None)
+    idx.load_rows(rows, 200, 0)
+    for t in range(0, 61, 2):
+        idx.observe(Pose(0, 0, 0), dead, t, lambda _m: None)
+    assert set(idx.stale) == {row_key(r) for r in rows}
+
+
+def test_a_row_the_game_reports_not_spawned_beyond_the_learned_range_is_removed():
+    rows, dead = spice_rows_on_dormant_sites(1, x0=400000.0)  # 4 km away, outside a 2.52 km confirm radius
+    idx = ScanIndex(None)
+    idx.load_rows(rows, 200, 0)
+    for t in (0, 3, 7, 10):
+        idx.observe(Pose(0, 0, 0), dead, t, lambda _m: 252000.0)
+    assert row_key(rows[0]) in idx.stale
+
+
+def test_a_row_seen_alive_in_a_pass_the_safety_brake_stops_is_saved_as_alive(tmp_path):
+    first = {**ORE_ROW, "x": 0.0, "y": 14000.0}
+    others = [{**ORE_ROW, "x": -6000.0 + 400.0 * i, "y": -10000.0} for i in range(30)]
+    idx = ScanIndex(tmp_path)
+    idx.set_world(("DD", 7))
+    idx.load_rows([first, *others], 200, 0)
+    here = Pose(0, 0, 0)
+    others_alive = parse_actors({"actors": [ore(f"o{i}", r["x"], r["y"]) for i, r in enumerate(others)]})
+    for t in (0, 3, 7):
+        idx.observe(here, others_alive, t, R150)  # the first node is gone: its row goes stale
+    assert row_key(first) in idx.stale
+    for t in (100, 103):
+        idx.observe(here, [], t, R150)  # the other 30 drop out of the list
+    idx.observe(here, parse_actors({"actors": [ore("first", 0.0, 14000.0)]}), 107, R150)  # the first is back
+    assert idx.braked == 1
+    again = ScanIndex(tmp_path)
+    again.set_world(("DD", 7))
+    assert row_key(first) not in again.stale
+
+
+def test_a_scan_row_whose_metadata_is_text_is_still_ranked_and_shown(tmp_path):
+    det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+    session(det, "DD")
+    pose(det, 10, 0, t=1)
+    good = {**ORE_ROW, "x": 20000.0}
+    det.load_scan([good, {**good, "x": 90000.0, "metadata": "unknown"}], 200, 1)
+    det.ui("resource", "iron")
+    det.compute(2)
+    det.snapshot()
+    assert len(det.nodes({"magnetiteore"})) == 2
 
 
 # -- detector end to end (no I/O) -------------------------------------------------------
@@ -397,3 +519,70 @@ def test_a_buggy_creeping_between_nodes_for_a_while_never_shows_as_a_crawler():
         vd.on_pose(float(i), Pose(x, 5.0, 0.0), 0.0)
         seen.add(vd.current)
     assert "sandcrawler" not in seen and vd.current == "buggy"
+
+
+# -- per-world files and the world of a message --------------------------------------------
+def test_a_session_with_no_world_writes_no_per_world_file(tmp_path):
+    det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+    session(det, None, seed=None, t=0)  # the menus: no map yet
+    pose(det, 10, 0, t=0)
+    actors(det, spice(1, 3000 * M, 0, "Medium", fill=0, spawned=False), t=1, world=None, seed=None)
+    actors(det, spice(1, 3000 * M, 0, "Medium", fill=0.05), t=2, world=None, seed=None)
+    det.load_scan([ORE_ROW], 200, 3)
+    assert det.recent_event(2).startswith("Spice blow!")  # the blow and the rows were handled ...
+    assert sorted(p.name for p in tmp_path.glob("*None*")) == []  # ... but no file stands for "no world"
+
+
+def test_a_loading_screen_into_the_same_world_keeps_the_scan_rows(tmp_path):
+    det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+    session(det, "DD", t=0)
+    det.load_scan([ORE_ROW], 200, 1)
+    session(det, None, t=10)  # loading screen reports no world
+    session(det, "DD", t=20)
+    assert [row_key(r) for r in det.scan.rows] == [row_key(ORE_ROW)]
+    assert det.scan.fetched_at == 1  # not downloaded again before the regular refresh
+
+
+def test_a_different_world_after_a_loading_screen_drops_the_scan_rows(tmp_path):
+    det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+    session(det, "DD", t=0)
+    det.load_scan([ORE_ROW], 200, 1)
+    session(det, None, t=10)
+    session(det, "HB", t=20)
+    assert det.scan.rows == [] and det.scan.fetched_at is None
+
+
+def test_a_dataset_from_the_guild_server_holding_nan_is_refused(monkeypatch):
+    client = SyncClient(server="https://127.0.0.1:1")
+    monkeypatch.setattr(client, "_open", lambda _req: (b'{"routes": [{"x": NaN}]}', {}))
+    with pytest.raises(SyncServerError):
+        client.fetch("key", "/v1/data/routes")
+
+
+def test_replay_load_in_ignores_a_session_world_that_is_not_text():
+    load_in, seen = _LoadIn(), set()
+    feed = [
+        BusMessage("snapshot", "dune.session", {"worldId": "DD"}),
+        BusMessage("delta", "dune.player", {"x": 0, "y": 0, "z": 0}),
+        BusMessage("delta", "dune.map.actors", {"actors": [spice("a", 1000, 0)]}),  # the load-in list
+        BusMessage("delta", "dune.session", {"worldId": 5}),  # not a world name: no map change
+        BusMessage("delta", "dune.map.actors", {"actors": [spice("a", 1000, 0), spice("b", 2000 * M, 0)]}),
+    ]
+    fields = [f for msg in feed for f in load_in.new_fields(msg, seen)]
+    assert [f["dist_m"] for f in fields] == [2000]
+
+
+def test_a_farm_container_list_whose_world_is_not_text_still_closes_its_stop(tmp_path):
+    route = {"id": "yard", "items": ["x"], "resetS": 600, "sites": [{
+        "name": "Yard", "world": "survival_1", "center": {"x": 0, "y": 0, "z": 0},
+        "stops": [{"x": x, "y": 0, "z": 0, "kind": "chest", "name": f"chest {x}"} for x in (0, 1000)]}]}
+    det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+    assert det.on_dataset("routes", {"routes": [route]})
+    session(det, "survival_1", seed=1, t=1)
+    det.ui("route_start", "yard")
+    pose(det, 0, 0, t=2)
+    pose(det, 0, 0, t=2.5)
+    det.handle(BusMessage("delta", "dune.map.actors", {"gated": False, "worldId": 12, "coriolisWorldSeed": 1, "actors": [
+        {"id": "c0", "actorType": "BP_TemporaryLootContainer_BasicContainer_C", "markerType": "LootContainer",
+         "hasLoot": False, "x": 0, "y": 0, "z": 0}]}), 3)
+    assert det.farm.done == {0}

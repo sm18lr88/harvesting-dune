@@ -1,18 +1,20 @@
 """Spice lifecycle (blows, remembered fields, stale removal) and self-management."""
 
+import ctypes
 import json
 import os
 import shutil
 import subprocess
+import sys
+from ctypes import wintypes
 
 import pytest
-from helpers import CELL_CM, actors, pose, session, spice
+from helpers import CELL_CM, M, actors, ore, pose, session, spice
 
 from harvesting_dune.app import Detector
 from harvesting_dune.feed import BRIDGE_SCRIPT
 from harvesting_dune.governor import (
     Governor,
-    apply_process_policy,
     cap_directory,
     own_working_set_mb,
     system_free_mb,
@@ -54,6 +56,45 @@ def test_active_field_is_remembered_after_leaving_range_then_forgotten():
     # the store forgets it after the TTL as well (but keeps ordinary actors only 20 min)
     assert det.store.prune(100 + 30 * 60, 20 * 60, 45 * 60) == 0
     assert det.store.prune(100 + 46 * 60, 20 * 60, 45 * 60) == 1
+
+
+def test_a_loading_screen_keeps_tracked_actors_of_the_same_world():
+    det = Detector(None, min_rescore_s=0)
+    session(det, "DD", t=0)
+    pose(det, 0, 0)
+    actors(det, spice("s1", 500 * M, 0, "Large"), t=1)
+    actors(det, t=2)  # left the load range: remembered
+    session(det, None, t=10)  # loading screen reports no world
+    assert det.store.world == (None, 7)  # guild sync still sees the menu
+    session(det, "DD", t=20)
+    assert [d["id"] for d in det.remembered_spice(21)] == ["dd-mem-s1"]
+    session(det, "HB", t=30)  # a different world still starts empty
+    assert det.store.items == {}
+
+
+def test_a_saved_range_marks_a_vanished_node_missing_from_the_first_minute():
+    det = Detector(None, min_rescore_s=0)
+    det.store.saved_ranges = {"DD": {"magnetiteore": 200 * M}}
+    session(det, "DD", t=0)
+    pose(det, 0, 0)
+    actors(det, ore("o1", 50 * M, 0), t=1)
+    actors(det, t=2)  # gone while the player stands 50 m away
+    assert det.store.items["o1"].status is Status.MISSING_IN_RANGE
+
+
+def test_actors_still_in_the_latest_list_survive_a_quiet_feed():
+    det = Detector(None, min_rescore_s=0)
+    session(det, "DD", t=0)
+    pose(det, 0, 0)
+    acts = [ore(f"o{i}", (100 + i) * M, 0) for i in range(3)]
+    actors(det, *acts, t=1)
+    actors(det, *acts, t=2)
+    # real journals show 28-43 min in a world with no new actor list
+    assert det.store.prune(2 + 30 * 60, 20 * 60, 45 * 60) == 0
+    actors(det, *acts, t=3 + 30 * 60)
+    assert det.store._first_seen_distances == {}  # their return is not a first sighting
+    # if the feed stops for good, they are still forgotten eventually
+    assert det.store.prune(3 + 76 * 60, 20 * 60, 45 * 60) == 3
 
 
 def test_confirmed_stale_rows_trigger_one_scan_refresh_and_drop_their_overlay():
@@ -107,10 +148,45 @@ def test_journal_folder_is_capped_oldest_first(tmp_path):
     assert sorted(p.name for p in tmp_path.iterdir()) == ["j0.jsonl", "j4.jsonl"]
 
 
+def test_the_governor_forgets_an_unseen_node_after_20_minutes_and_an_active_field_after_45(monkeypatch, tmp_path):
+    import harvesting_dune.governor as g
+
+    monkeypatch.setattr(g, "system_free_mb", lambda: 8000.0)  # plenty of memory: lean mode stays off
+    monkeypatch.setattr(g, "own_working_set_mb", lambda: 100.0)
+    det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+    session(det, "DD", t=0)
+    pose(det, 10, 0)
+    near = ore("near", 10 * M, 0)
+    actors(det, near, ore("o1", 20 * CELL_CM, 0), spice("s1", 20 * CELL_CM, 0, "Medium", fill=0.7), t=100)
+    actors(det, near, t=101)  # the node and the active field left the load range
+    gov = Governor(det, None)
+    gov.tick(100 + 19 * 60)
+    assert {"o1", "s1"} <= set(det.store.items)
+    gov.tick(100 + 21 * 60)
+    assert "o1" not in det.store.items and "s1" in det.store.items
+    gov.tick(100 + 46 * 60)
+    assert "s1" not in det.store.items
+
+
+def priority_class() -> int:
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.GetCurrentProcess.restype = wintypes.HANDLE
+    k32.GetPriorityClass.argtypes = [wintypes.HANDLE]
+    k32.GetPriorityClass.restype = wintypes.DWORD
+    return k32.GetPriorityClass(k32.GetCurrentProcess())
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows APIs")
 def test_windows_probes_work():
+    before = priority_class()
     assert system_free_mb() > 0 and own_working_set_mb() > 0
-    assert apply_process_policy()  # at least the priority change applies
+    # in a child process: the policy is process-wide, and Windows passes it on to every process pytest starts later
+    probe = subprocess.run([sys.executable, "-c", "from harvesting_dune.governor import apply_process_policy as a; print(a())"],
+                           capture_output=True, text=True, timeout=60, check=False, creationflags=subprocess.CREATE_NO_WINDOW)
+    assert probe.returncode == 0, probe.stderr
+    assert "below-normal priority" in probe.stdout  # at least the priority change applies
+    assert priority_class() == before
+
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
@@ -210,6 +286,31 @@ def test_size_mode_says_when_no_active_field_of_that_size_is_known():
     det.compute(3)
     assert det.page_state()["dest"] is None
     assert det.status_text() == "no active field of this size seen yet"
+
+
+
+def test_a_site_reported_again_under_a_new_id_replaces_what_we_remembered():
+    det = Detector(None, min_rescore_s=0)
+    session(det, "DD")
+    pose(det, 10, 0, t=1)
+    actors(det, spice("old", 30 * CELL_CM, 0, "Large", fill=1.0), t=2)
+    actors(det, t=3)  # unloaded: remembered as an active field
+    det.ui("resource", "spice_large")
+    det.compute(4)
+    assert det.page_state()["dest"] is not None
+    actors(det, spice("new", 30 * CELL_CM, 0, "Large", fill=0, spawned=False), t=5)  # same site, new id, empty
+    det.compute(6)
+    assert det.page_state()["dest"] is None and "old" not in det.store.items
+
+
+def test_a_dormant_site_back_active_under_a_new_id_is_a_spice_blow():
+    det = Detector(None, min_rescore_s=0)
+    session(det, "DD")
+    pose(det, 10, 0)
+    actors(det, spice("old", 3000 * 100, 0, "Medium", fill=0, spawned=False), t=1)
+    actors(det, t=2)
+    actors(det, spice("new", 3000 * 100, 0, "Medium", fill=0.05, spawned=True), t=3)
+    assert det.recent_event(3) == "Spice blow! medium field 3.0 km away"
 
 
 def test_a_spawn_point_out_of_range_is_never_a_candidate():
@@ -336,14 +437,19 @@ def test_spice_alternatives_are_confirmed_active_fields_bigger_first():
            spice("M1", 10 * CELL_CM, 0, "Medium", fill=0.8),
            spice("M2", -12 * CELL_CM, 0, "Medium", fill=0.8),
            spice("S1", 3 * CELL_CM, 0, "Small", fill=1.0),
+           spice("L2", -45 * CELL_CM, 0, "Large", fill=0.7),
            spice("E1", 5 * CELL_CM, 0, "Large", fill=0, spawned=False), t=2)  # empty site: never a line
     det.load_scan([{"type": "BP_SpiceField_Large_C", "map_marker_id": "spicefieldlarge", "x": -40 * CELL_CM, "y": 0, "z": 0}], 200, 2)
     det.ui("resource", "spice_large")
     det.compute(3)
     st = det.page_state()
     assert round(st["dest"]["x"]) == round(30 * CELL_CM)
-    # scan row, empty site and the small field excluded (small fields are never worth a trip)
-    assert [a["size"] for a in st["alternatives"]] == ["medium", "medium"]
+    # large mode lines only large fields: no medium or small, no scan row, no empty site
+    assert [a["size"] for a in st["alternatives"]] == ["large"]
+    det.ui("resource", "spice")
+    det.compute(4)
+    # the all-sizes mode still lists medium and large, bigger first, never small
+    assert [a["size"] for a in det.page_state()["alternatives"]] == ["large", "large", "medium"]
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
@@ -389,7 +495,7 @@ setTimeout(() => {
     ]
 
 
-def test_alternatives_are_drawn_even_without_a_main_target():
+def test_size_mode_draws_no_line_to_fields_of_another_size():
     det = Detector(None, min_rescore_s=0)
     session(det, "DD")
     pose(det, 10, 0, t=1)
@@ -397,7 +503,10 @@ def test_alternatives_are_drawn_even_without_a_main_target():
     det.ui("resource", "spice_large")
     det.compute(3)
     st = det.page_state()
-    assert st["dest"] is None and [a["size"] for a in st["alternatives"]] == ["medium"]
+    assert st["dest"] is None and st["alternatives"] == []
+    det.ui("resource", "spice_medium")
+    det.compute(4)
+    assert det.page_state()["alternatives"] == []  # the medium field is the target itself
 
 
 def test_blow_is_caught_through_the_companions_list_flicker(tmp_path):
@@ -424,8 +533,9 @@ def test_fresh_blow_and_harvested_fields_get_distinct_lines():
     session(det, "DD")
     pose(det, 10, 0, t=1)
     actors(det, spice("fresh", 20 * CELL_CM, 0, "Medium", fill=0, spawned=False), spice("h", -10 * CELL_CM, 0, "Medium", fill=0.9), t=2)
-    actors(det, spice("fresh", 20 * CELL_CM, 0, "Medium", fill=1, spawned=True), spice("h", -10 * CELL_CM, 0, "Medium", fill=0.5), t=62)
-    det.ui("resource", "spice_large")
+    actors(det, spice("fresh", 20 * CELL_CM, 0, "Medium", fill=1, spawned=True), spice("h", -10 * CELL_CM, 0, "Medium", fill=0.5),
+           spice("L", 0, 4 * CELL_CM, "Large", fill=1), t=62)  # the main target
+    det.ui("resource", "spice")
     det.compute(63)
     kinds = {a["kind"]: a for a in det.page_state()["alternatives"]}
     assert kinds["fresh"]["color"].startswith("rgba(255,70,200") and kinds["harvested"]["color"].endswith(",0.25)")
@@ -453,3 +563,57 @@ def test_resources_added_later_start_hidden_for_existing_settings(tmp_path):
     (tmp_path / "settings.json").write_text(json.dumps({"minimapHidden": ["iron"], "minimapFocus": False, "lines": True}))
     det = Detector(None, data_dir=tmp_path)
     assert "cages" in det.minimap_hidden and "iron" in det.minimap_hidden and "spice" not in det.minimap_hidden
+
+
+def _cage(id_, x, y):
+    return {"id": id_, "actorType": "BP_TemporaryLootContainer_UltraRareContainer_C", "markerType": "LootContainer",
+            "spriteKey": "lootcontainer", "x": x, "y": y, "z": 0}
+
+
+def test_an_ore_node_the_game_loads_again_under_a_new_id_is_one_node(tmp_path):
+    det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+    session(det, "DD")
+    pose(det, 0, 0, t=1)
+    actors(det, ore("19636D1D030:195DFD17120:10", 400 * M, 0), t=2)
+    actors(det, t=3)  # unloaded
+    actors(det, ore("19636D1D030:195E69B31A0:10", 400 * M, 0), t=4)  # loaded again: only the middle of the id changed
+    assert [(n.x, n.source) for n in det.nodes({"magnetiteore"})] == [(400 * M, "live")]
+
+
+def test_an_empty_actor_list_after_a_full_one_is_no_proof_that_anything_left(tmp_path):
+    det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+    det.store.saved_ranges = {"DD": {"magnetiteore": 200 * M}}
+    session(det, "DD", t=0)
+    pose(det, 0, 0)
+    nodes = [ore(f"o{i}", (50 + i) * M, 0) for i in range(6)]
+    actors(det, *nodes, t=1)
+    actors(det, t=2)  # the list drops out while a menu is open
+    assert {k: t.status for k, t in det.store.items.items()} == {f"o{i}": Status.LIVE for i in range(6)}
+
+
+def test_a_container_next_to_you_is_not_emptied_when_the_whole_list_drops_out(tmp_path):
+    det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+    session(det, "DD")
+    pose(det, 0, 0, t=1)
+    actors(det, _cage("c1", 10 * M, 0), ore("o1", 300 * M, 0), ore("o2", 310 * M, 0), t=2)
+    actors(det, t=3)
+    assert det.looted == {}
+
+
+def test_a_container_next_to_you_is_not_emptied_when_the_list_unloads_an_area(tmp_path):
+    det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+    session(det, "DD")
+    pose(det, 0, 0, t=1)
+    far = [ore(f"o{i}", (300 + i) * M, 0) for i in range(6)]
+    actors(det, _cage("c1", 10 * M, 0), *far, t=2)
+    actors(det, far[0], t=3)  # the cage and five more left at once
+    assert det.looted == {}
+
+
+def test_a_container_the_game_shows_emptied_keeps_that_fact(tmp_path):
+    det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+    session(det, "DD")
+    pose(det, 0, 0, t=1)
+    actors(det, {**_cage("c1", 10 * M, 0), "hasLoot": True}, t=2)
+    actors(det, {**_cage("c1", 10 * M, 0), "hasLoot": False}, t=3)
+    assert det.store.items["c1"].actor.has_loot is False

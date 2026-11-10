@@ -5,8 +5,10 @@ import sqlite3
 
 import pytest
 from guildsync import keysctl
+from guildsync.api import Api
 from guildsync.keystore import KEY_IDLE_S, MAX_ACTIVE_REGULAR, KeyCapFull
 from guildsync.storage import MIGRATIONS, Storage
+from test_sync_objects_server import ALPHA, pin, request
 from test_sync_server import POLL, call, running
 
 T0 = 1794160000.0
@@ -95,6 +97,15 @@ def test_each_use_restarts_the_30_days(store):
     assert st.lookup_key(token)["state"] == "active"
     clock.t = T0 + 20 * DAY + KEY_IDLE_S + 1
     assert st.lookup_key(token)["state"] == "expired"
+
+
+def test_reading_the_guild_profiles_counts_as_use(store):
+    st, clock = store
+    _, token = st.issue_key("Paul Test")
+    body = {"identity": POLL["identity"], "since": 0}
+    assert Api(st, clock).profiles(st.lookup_key(token), body, "203.0.113.7", T0 + 20 * DAY)[0] == 200
+    clock.t = T0 + 20 * DAY + KEY_IDLE_S - 1
+    assert st.lookup_key(token)["state"] == "active"
 
 
 def test_admin_keys_never_expire(store):
@@ -198,3 +209,51 @@ def test_over_tls_an_idle_key_gets_key_expired_and_renew_restores_it(tmp_path):
         assert st.renew_key(key_id, now) == "renewed"
         assert _sync(port, token)[0] == 200
         st.close()
+
+
+def test_key_lookups_from_request_threads_read_the_shared_connection_under_the_store_lock(store):
+    st, _ = store
+    _, token = st.issue_key("Paul Test")
+    conn, unlocked = st._conn, []
+
+    class Watched:  # the connection every request thread shares
+        def execute(self, *args):
+            if not st._lock.locked():
+                unlocked.append(args[0])
+            return conn.execute(*args)
+
+    st._conn = Watched()
+    try:
+        key = st.lookup_key(token)
+    finally:
+        st._conn = conn
+    assert key["label"] == "Paul Test" and unlocked == []
+
+
+def test_keysctl_list_shows_control_characters_in_names_as_question_marks(tmp_path, capsys):
+    db, clock = str(tmp_path / "guild.db"), Clock()
+    st = Storage.open(db, clock)
+    key_id, _ = st.issue_key("Leto Test")
+    st.upsert_character(key_id, {"characterName": "Leto\r\n\x1b[2KTest", "characterId": 1001, "battlegroupId": "bg"}, T0)
+    st.close()
+    code, out, _ = ctl(capsys, clock, "--db", db, "list")
+    assert code == 0 and "\x1b" not in out and "\r" not in out
+    assert len(out.splitlines()) == 3  # header, the one key, the summary
+    assert "Leto???[2KTest@bg" in out
+
+
+def test_a_key_revoked_before_its_sync_writes_leaves_no_live_pin(store):
+    st, clock = store
+    key_id, _ = st.issue_key("Feyd Test")
+    api = Api(st, clock)
+    real = st.upsert_character
+
+    def revoked_first(*args, **kwargs):  # keysctl commits its revoke after the key check, before the write
+        st.revoke_key(key_id, clock.t)
+        return real(*args, **kwargs)
+
+    st.upsert_character = revoked_first
+    status, body, *headers = api.sync({"id": key_id}, request(ALPHA, objects=[pin()]), "127.0.0.1", clock.t)
+    assert (status, body["type"].rsplit("#", 1)[1], headers) == (401, "invalid-key", [{"WWW-Authenticate": 'Bearer realm="guildsync"'}])
+    live = st._conn.execute("SELECT COUNT(*) FROM objects WHERE expires_at > ?", (clock.t,)).fetchone()[0]
+    assert live == 0

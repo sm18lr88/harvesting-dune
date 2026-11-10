@@ -32,6 +32,8 @@ The detector is one Python process. Each module has one reason to change. Each d
 | `areas.py`, `terrain.py` | Area clusters, session scoring, terrain and route search. |
 | `vehicle.py` | Vehicle detection. |
 | `ships.py` | Downed ships: alert, memory, gone and emptied. |
+| `loot.py` | Writes `data\loot-rare.json`. The looted-materials index and rare cages. |
+| `itemsources.py` | Writes `data\item-sources.json`. Item drop locations from the loot crawl. |
 | `routes.py`, `farm.py` | Farm routes: the `routes` dataset, the run you are on, and its page marks and text. `routes.py` writes `data\route-done-<map>-<seed>.json`. |
 | `gate.py` | The key gate: the detector works only with a guild key that the server accepted in the last 72 h. It writes no file. |
 | `datacache.py` | Writes `data\datasets\` (the server's datasets, their ETags and the last key check). |
@@ -152,15 +154,17 @@ A short, slow drive looks the same as a sandcrawler. In that case, select the ve
 - **Deep Desert start row:** the setting "Lines start in row" (default A, the entrance) hides the lines until your position is in that row or a row further north. The destination marker stays.
 - **Main line:** the companion's own cyan route line, from you to the best target. The bridge sends it again after approximately 30 m of movement, because the companion never draws it again as you move.
 - **Alternative lines:** thin and fainter, up to 4.
-  - For spice: only fields that the tool confirmed as active, never unconfirmed scan rows. The color shows the size: large is faint cyan, **medium is amber**, small is faint white. A fresh blow is magenta. A field that somebody harvests is fainter.
+  - For spice: only fields that the tool confirmed as active, never unconfirmed scan rows. The color shows the size: large is faint cyan, **medium is amber**, Small fields get no line. A fresh blow is magenta. A field that somebody harvests is fainter.
+  - A size search ("Large fields", "Medium fields") draws lines only to fields of that size. "Spice Sand" draws lines to large and medium fields.
   - For other resources: the next best patches in ranking order, one line per patch. An area that only the scan database knows gets a fainter line than an area that you saw live.
-  - The lines show even when there is no main target, for example when no active large field is known yet.
+  - The lines show even when there is no main target, for example when no active large field is known yet in "Spice Sand".
 - **How the bridge draws the lines:** the companion's map engine (gtmap) sets `this._createdLayers = []` in its constructor. A setter that the bridge installs at page start catches that. Thus, the bridge gets the minimap's map instance and draws into its own `createStaticLayer()`, with the same renderer and zoom. The bridge **calibrates** the transform from world to map against the page's own markers (each marker stores its world point and its map point). The route line is the fallback. Thus, the bridge assumes nothing about the orientation.
 
 ## Spice in the Deep Desert
 
 - **Spice blows:** the game sends all spice spawn points within its load range (approximately 4.2 km, learned), also the empty ones (`spawned:false`). An empty point that becomes active is a blow. The badge shows `Spice blow! <size> field <n> km away` for 90 s, and the ranking runs again immediately. Blows of small fields get no message. The game sends nothing from beyond the load range. Thus, the tool cannot detect blows there. The companion also reads no explosion actor.
-- **Remembered fields:** active fields that you saw stay on the companion map for 45 min after they leave the load range. The tool draws them from your observation and marks them as not reportable.
+- **Remembered fields:** active fields that you saw stay on the companion map for 45 min after they leave the load range. The tool draws them from your observation and marks them as not reportable. The game can report a site again under a new actor id. The new report then replaces the remembered one: an empty site is no longer a target, and a site that was empty and is now active is a blow.
+- **Newest report wins:** a spice target can come from your own companion, from a guildmate (guild sync) or from the scan database. At each site, the newest report decides if the field is active. A guildmate who saw the field active makes it a target for 45 min. A guildmate who saw the site empty removes it as a target. The scan database has no time, so any other report beats it. A site that your own companion loads now is decided by your companion only.
 - **Empty sites are never targets:** the game sends every spice site, active or not. A scan row can be on a site that the game reports as `spawned:false`. In that case, the tool drops the row as a target immediately and removes it from the map. This needs no learned range. The tool also hides empty sites on both maps, because the companion draws them like fields.
 - **Removing stale fields:** after the tool confirms rows as stale, the page reloads its scan layer without those rows, at most once a minute. Thus, they really disappear. Until then, a "not spawned" overlay covers them.
 
@@ -207,17 +211,17 @@ What never happens:
 ## Robustness
 
 - **Saved data survives a hard stop:** the tool writes each file to a temporary file first. Then it replaces the old file in one step. This applies to settings, corrections, terrain, blows, ranges, the loot index, learned values and mined nodes. Thus, a crash during a write never destroys the file. The tool ignores a file with unexpected contents and logs a warning. It does not stop.
-- **Terrain and "Set base here" stay** per map and layout (`data\terrain-<map>-<seed>.json`). The tool saves the terrain every minute and at exit.
+- **Terrain stays** per map and layout (`data\terrain-<map>-<seed>.json`). "Set base here" stays per map and layout in `data\settings.json`. The tool saves the terrain every minute and at exit.
 - **Corrections expire:** a confirmed-stale row of a node stays hidden for the respawn time of that resource. That time is the learned value, or else 45 min for Titanium and Stravidium and 30 min for others. A spice site stays hidden for 3 h. After that, the row shows again. If the node is still absent when you come near, the tool confirms it again.
 - **The tool restarts failed background loops:** if one loop fails (feed, scan refresh, loot index, …), the tool logs the error and restarts that loop. The other loops continue to draw lines. If a scan download fails, the tool keeps the rows that it has. It tries again after 30 s, 1 min, 2 min, and so on, up to 10 min.
 - **Clean exit** (`--exit-when-companion-gone`): after the companion refused connections for that time, the detector saves the terrain, clears the pages and exits. This also works when a settings page is open.
-- **Problems are reported, the companion is not touched:** every error (from every source, also from `bridge.js` in a companion page) goes into a list of the last 20. The settings page shows them with a report to copy. The companion's map window shows a small notice for 30 min after an error. If the detector fails 3 times quickly, the watcher shows a Windows message once per companion session. The code of the bridge catches its own errors, so a failure never reaches the companion's own code.
+- **Problems are reported, the companion is not touched:** every error (from every source, also from `bridge.js` in a companion page) goes into a list of the last 20. The settings page shows the last 5, with a report to copy. The companion's map window shows a small notice for 30 min after an error. If the detector fails 3 times quickly, the watcher shows a Windows message once per companion session. The code of the bridge catches its own errors, so a failure never reaches the companion's own code.
 - **Objects:** one bad object never blanks the layer. The bridge skips it and draws the rest. If the server refuses a pin, the tool drops it and shows a note on the settings page. Positions and finds go out again at once.
 - **Settings page:** the server answers only `127.0.0.1` and `localhost` and refuses changes from other websites. Each change shows "Saved" or the reason why it failed. A tab that shows an old version reloads itself.
 
 ## Logs
 
-The detector writes all warnings and errors to `data\logs\errors.log`. It writes everything to `data\logs\detector.log`. Each log keeps its last 5 files. The limit is 2 MB for each `detector.log` file and 1 MB for each `errors.log` file.
+The detector writes all warnings and errors to `data\logs\errors.log`. It writes everything to `data\logs\detector.log`. Each log keeps its current file and 5 older files. The limit is 2 MB for each `detector.log` file and 1 MB for each `errors.log` file.
 
 These sources also go into the logs:
 
@@ -233,7 +237,9 @@ If the same warning repeats, the detector logs it at most one time each minute. 
 
 - The detector runs at below-normal CPU priority with Windows EcoQoS (efficiency cores). The game always gets the CPU first.
 - **Lean mode** starts when free system memory is below 1.2 GB (it ends above 2 GB), or when the detector uses more than 400 MB. In lean mode, the detector writes no actor journal, sends smaller overlays, drops its caches and runs the garbage collector.
-- The detector forgets actors that it did not see for 20 min. Active spice fields stay for 45 min. The journal folder has a limit of 300 MB. The oldest files go first.
+- The detector forgets actors that it did not see for 20 min. Active spice fields stay for 45 min. Actors in the latest list stay for 45 min too, because the companion can stay quiet while you stand still.
+- A loading screen keeps the actors and downed ships of the world. Only another world (map or Coriolis seed) clears them.
+- The journal folder has a limit of 300 MB. The oldest files go first. A long run starts a new journal file every 50 MB, so the limit also holds while it runs.
 - In menus, on the overland map and in places with nothing to track, the detector checks every 2 s instead of every 0.5 s.
 - The detection range for stale confirmation is learned **per actor type** (plants approximately 0.6 km, spice approximately 4.2 km). A safety brake refuses to mark a large part of the rows nearby as stale at the same time.
 
@@ -257,7 +263,7 @@ uv run harvesting-dune run                                     # add --resource 
 uv run pytest                                                # tests (the bridge tests need Node.js)
 ```
 
-If the detector stops, the pages remove everything that it showed within approximately 20 s.
+If the detector stops, the pages remove everything that it showed after approximately 1 minute.
 
 **WARNING:** While the DevTools port is open, any program on this PC can control the companion's pages. To close the port, restart the companion in the usual way.
 

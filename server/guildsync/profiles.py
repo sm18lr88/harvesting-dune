@@ -10,6 +10,7 @@ import math
 
 from .fields import MAX_INT, BadField, identity, integer, join, obj
 from .problems import OTHER_KEY, invalid
+from .profilestore import MAX_PROFILES_PER_KEY, ProfileCap
 
 MAX_PROFILE = 32768
 PROFILE_FIELDS = ("status", "skills", "stats", "recipes", "landsraad", "achievements", "session")
@@ -78,7 +79,11 @@ class ProfileRoutes:
         if stored is None:
             written = self.storage.delete_profile(key["id"], who["characterId"])
         else:
-            written = self.storage.put_profile(key["id"], who, stored, now)
+            try:
+                written = self.storage.put_profile(key["id"], who, stored, now)
+            except ProfileCap:
+                return 400, invalid("identity.characterId",
+                                    f"This key already shares {MAX_PROFILES_PER_KEY} character profiles.")
         if not written:  # the ownership check ran inside the write
             return 403, OTHER_KEY
         self.storage.touch_key(key["id"], now, ip)
@@ -90,7 +95,9 @@ class ProfileRoutes:
             who, since = identity(b["identity"]), integer(b["since"], "since", 0)
         except BadField as bad:
             return 400, invalid(bad.field)
-        rows, ids, cursor = self.storage.profiles_since(who["battlegroupId"], since)
+        with self.storage.snapshot():
+            rows, ids, cursor = self.storage.profiles_since(who["battlegroupId"], since)
+        self.storage.touch_key(key["id"], now, ip)
         profiles = [{"characterId": r["characterId"], "characterName": r["characterName"], "rev": r["rev"],
-                     "ageS": now - r["updatedAt"], "profile": json.loads(r["body"]), "playerTag": r["playerTag"]} for r in rows]
+                     "ageS": now - r["changedAt"], "profile": json.loads(r["body"]), "playerTag": r["playerTag"]} for r in rows]
         return 200, {"now": now, "next": cursor, "ids": ids, "profiles": profiles}

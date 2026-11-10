@@ -8,7 +8,7 @@ import logging
 import re
 
 import pytest
-from helpers import pose, session
+from helpers import CELL_CM, actors, pose, session, spice
 
 from harvesting_dune import logsetup, syncloop
 from harvesting_dune.app import Detector
@@ -71,7 +71,7 @@ def test_objects_are_merged_by_tag_and_id_and_unknown_kinds_are_kept_silently(tm
     assert det.peers.objects_seen
 
 
-def test_page_state_objects_carry_id_point_body_mine_age_ttl_and_author(tmp_path):
+def test_page_state_objects_carry_id_point_body_mine_and_author(tmp_path):
     det = player(tmp_path)
     det.ingest_peer(response([]), NOW)
     before = {k: v for k, v in det.page_state().items() if k != "objects"}
@@ -81,13 +81,38 @@ def test_page_state_objects_carry_id_point_body_mine_age_ttl_and_author(tmp_path
     assert {k: v for k, v in state.items() if k != "objects"} == before  # dest, route, alternatives, stale, extraActors
     assert state["objects"] == [
         {"id": "tagalpha:m1", "kind": "pin", "x": 1000.0, "y": 2000.0, "z": 5.0, "body": {"label": "MINE"},
-         "mine": True, "ageS": 4, "ttlS": 3600, "by": "Alpha Test"},
+         "mine": True, "by": "Alpha Test"},
         {"id": "tagbeta0:p1", "kind": "pin", "x": 1000.0, "y": 2000.0, "z": 5.0, "body": {"label": "IRON HERE"},
-         "mine": False, "ageS": 10, "ttlS": 3600, "by": "Beta Test"},
+         "mine": False, "by": "Beta Test"},
     ]
     assert det.peers.my_tag == "tagalpha"
     det.enabled = False  # recommendations off: pins hide with everything else
     assert det.page_state()["objects"] == []
+
+
+def test_a_pin_ageing_on_the_feed_clock_does_not_change_page_state(tmp_path):
+    det = player(tmp_path)
+    det.ingest_peer(response([obj("p1")]), NOW)
+    first = json.dumps(det.page_state())
+    pose(det, 0, 0, t=det.clock + 30)
+    assert json.dumps(det.page_state()) == first  # an unchanged pin never forces a push and a redraw
+
+
+def test_a_same_key_alts_pin_before_our_own_in_one_reply_is_still_ours(tmp_path):
+    det = player(tmp_path)
+    det.ingest_peer(response([obj("alt1", cid=1009, name="Alpha Alt", tag="tagalpha", rev=1),
+                              obj("own1", cid=1001, name="Alpha Test", tag="tagalpha", rev=2)]), NOW)
+    assert {o["id"]: o["mine"] for o in det.peers.objects.values()} == {"alt1": True, "own1": True}
+    assert det.delete_object("alt1")
+
+
+def test_remembered_spice_in_page_state_ages_on_the_feed_clock(tmp_path):
+    det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+    session(det, "DD")
+    pose(det, 10, 0)
+    actors(det, spice(7, 20 * CELL_CM, 0, "Medium", fill=0.7), t=100)
+    actors(det, t=101)  # out of load range now, still within the 45 min memory on the feed clock
+    assert "dd-mem-7" in [a["id"] for a in det.page_state()["extraActors"]]
 
 
 def test_objects_out_of_scope_are_kept_and_drawn_on_arrival(tmp_path):
@@ -225,6 +250,18 @@ def test_a_refused_upload_is_dropped_and_the_sync_goes_on_without_backoff(tmp_pa
 
     other = loop_run(det, monkeypatch, bad_since, stop_after=1)
     assert other[1] == ("nap", BACKOFF_S[0])  # any other 400 still backs off
+
+
+def test_an_object_cap_refusal_keeps_the_staged_deletes(tmp_path):
+    det = player(tmp_path)
+    det.ingest_peer(response([obj("old1", cid=1001, name="Alpha Test", tag="tagalpha")]), NOW)
+    assert det.delete_object("old1")
+    det.publish_object("pin", {"label": "NEW"})
+    det.objects_refused("object-cap objects[1]")
+    assert [(u["id"], u["ttlS"]) for u in det.peers.objects_out] == [("old1", 0)]  # deletes always pass the cap
+    det.objects_refused("invalid-field objects[0].kind")
+    assert det.peers.objects_out == []  # any other refusal may be the delete itself: never resent in a loop
+
 
 
 def test_a_cut_objects_page_forces_the_next_sync_at_once(tmp_path, monkeypatch):

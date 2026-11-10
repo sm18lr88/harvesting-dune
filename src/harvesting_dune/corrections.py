@@ -14,7 +14,6 @@ that keep their layout (Hagga Basin) collected corrections forever and hid respa
 
 from __future__ import annotations
 
-import itertools
 import logging
 import math
 from collections.abc import Callable
@@ -106,14 +105,15 @@ class ScanIndex:
         self._restored = False  # expired corrections: rows the page still hides until it reloads
 
     # -- persistence ----------------------------------------------------------------------
-    def _path(self) -> Path | None:
-        if self._dir is None or self.world is None:
+    def _path(self, kind: str = "corrections") -> Path | None:
+        if self._dir is None or not self.world or self.world[0] is None:
             return None
         world, seed = self.world
-        return self._dir / f"corrections-{world}-{seed}.json"
+        return self._dir / f"{kind}-{world}-{seed}.json"
 
     def set_world(self, world: tuple) -> None:
-        if world == self.world:
+        """Every loading screen reports no world: the rows stay until a different real world arrives."""
+        if world == self.world or not world or world[0] is None:
             return
         self.world, self.rows, self.stale, self._absent = world, [], {}, {}
         self.refreshed = set()
@@ -125,6 +125,10 @@ class ScanIndex:
             if isinstance(k, str) and isinstance(v, dict)
             and all(isinstance(v.get(c), (int, float)) for c in ("x", "y", "z", "confirmedAt"))
         }
+        for v in self.stale.values():  # the overlay lower()s these; a hand-edited file may hold anything
+            for c in ("sprite", "type"):
+                if not isinstance(v.get(c), str):
+                    v[c] = None
 
     def _save(self) -> None:
         try_write_json(self._path(), self.stale, "stale corrections", indent=0)
@@ -150,7 +154,8 @@ class ScanIndex:
             x, y, z = r.get("x"), r.get("y"), r.get("z")
             if not all(isinstance(v, (int, float)) and math.isfinite(v) for v in (x, y, z)) or (x == 0 and y == 0):
                 continue
-            if marker_of(r.get("map_marker_id"), r.get("type")) is None:
+            names = (r.get("map_marker_id"), r.get("type"))
+            if not all(n is None or isinstance(n, str) for n in names) or marker_of(*names) is None:
                 continue
             clean.append(r)
         self.rows, self.status, self.fetched_at = clean, status, now
@@ -159,10 +164,8 @@ class ScanIndex:
         for r in clean:
             marker = marker_of(r.get("map_marker_id"), r.get("type"))
             self._index.setdefault(marker, {}).setdefault(_bucket(r["x"], r["y"]), []).append((r, row_key(r)))
-        if self._dir is not None and self.world is not None and clean:
-            # local copy for offline replay/diagnostics; overwritten on every refresh
-            path = self._dir / f"scan-{self.world[0]}-{self.world[1]}.json"
-            try_write_json(path, clean, "scan rows cache")
+        if clean:  # local copy for offline replay/diagnostics; overwritten on every refresh
+            try_write_json(self._path("scan"), clean, "scan rows cache")
 
     def nodes(self) -> list[Node]:
         """Scan rows as nodes (cached until rows or stale entries change)."""
@@ -174,7 +177,8 @@ class ScanIndex:
             if key in self.stale:
                 continue
             marker = marker_of(r.get("map_marker_id"), r.get("type"))
-            meta = r.get("metadata") or {}
+            meta = r.get("metadata")
+            meta = meta if isinstance(meta, dict) else {}  # third-party rows: anything else means nothing
             if meta.get("spawned") is False:
                 continue
             fill = meta.get("fillRate")
@@ -184,95 +188,97 @@ class ScanIndex:
         return out
 
     # -- confirmation ------------------------------------------------------------------------
+    def _own_actors(self, live: list[Actor]) -> dict[str, tuple[dict, str, list[Actor]]]:
+        """Live actors by the scan row they belong to: the nearest row of their type within the
+        match distance. Nodes in a cluster sit a few metres apart, so a neighbour must never
+        count as this row seen alive."""
+        own: dict[str, tuple[dict, str, list[Actor]]] = {}
+        for a in live:
+            index = self._index.get(a.marker) if a.marker else None
+            if not index:
+                continue
+            best, best_d = None, MATCH_CM[a.marker in SPICE_SIZE]
+            for r, key in _near(index, a.x, a.y, best_d):
+                d = math.hypot(r["x"] - a.x, r["y"] - a.y)
+                if d <= best_d:
+                    best, best_d = (r, key), d
+            if best is not None:
+                own.setdefault(best[1], (best[0], a.marker, []))[2].append(a)
+        return own
+
+    def _judge(self, r: dict, key: str, marker: str, mine: list[Actor], now: float) -> tuple[bool, tuple | None]:
+        """One row against its own live actors: (un-staled, stale candidate or None)."""
+        if any(a.spawned is not False for a in mine):
+            self._absent.pop(key, None)
+            if self.stale.pop(key, None) is None:
+                return False, None
+            if key in self.refreshed:
+                self._restored = True  # the page's scan layer still hides it until it reloads
+            return True, None
+        if key in self.stale:
+            return False, None
+        ab = self._absent.get(key)
+        if ab is None:
+            ab = self._absent[key] = _Absence(now, 0)
+        ab.snapshots += 1
+        # a downed ship: one snapshot is enough. Snapshots come ~20 s apart, so flying past you
+        # are in range for one; a hull that loads late is seen and un-staled right away.
+        if marker == SHIP_MARKER or (ab.snapshots >= MIN_ABSENT_SNAPSHOTS and now - ab.first_t >= MIN_ABSENT_S):
+            return False, (r, key, marker, "not spawned" if mine else "absent")
+        return False, None
+
+    def _brake(self, candidates: list[tuple], evaluated: int) -> list[tuple]:
+        """Candidates left after the safety brake. Only rows judged absent by range count: a row
+        the game itself reports not spawned is evidence, not a range assumption."""
+        absent = [c for c in candidates if c[3] == "absent"]
+        if len(absent) < BRAKE_MIN_ROWS or len(absent) <= BRAKE_SHARE * evaluated:
+            return candidates
+        self.braked += 1
+        log.warning(
+            "safety brake: %d of %d nearby scan rows would go stale at once; not marking them", len(absent), evaluated
+        )
+        for _, key, _, _ in absent:
+            self._absent.pop(key, None)
+        return [c for c in candidates if c[3] != "absent"]
+
     def observe(self, pose: Pose | None, live: list[Actor], now: float, radius_for) -> bool:
         """Update stale/confirmed state from one live snapshot. Returns True if anything changed.
 
         `radius_for(marker)` is the distance inside which an actor of that marker would
         certainly be loaded (learned per marker), or None if not learned yet: rows of an
-        unlearned type are never judged.
+        unlearned type are only judged on direct evidence.
         """
         if pose is None or not self._index:
             return False
-        radii = {}
-        # 1) Direct evidence: the game reports a site of the same type right at the row and it is
-        #    not spawned. That needs no detection range at all.
-        dormant_rows: set[str] = set()
-        for a in live:
-            if a.marker and a.spawned is False and a.marker in self._index:
-                match_cm = MATCH_CM[a.marker in SPICE_SIZE]
-                for r, key in _near(self._index[a.marker], a.x, a.y, match_cm):
-                    if math.hypot(r["x"] - a.x, r["y"] - a.y) <= match_cm:
-                        dormant_rows.add(key)
-        # live actors by (marker, bucket) with buckets the size of the match distance, so
-        # "is there a live one here?" touches a handful of actors, not every plant nearby
-        live_index: dict[tuple, list[Actor]] = {}
-        for a in live:
-            if a.marker:
-                cell = MATCH_CM[a.marker in SPICE_SIZE]
-                live_index.setdefault((a.marker, math.floor(a.x / cell), math.floor(a.y / cell)), []).append(a)
-        for marker in self._markers:
-            r = radius_for(marker)
-            if r:
-                radii[marker] = min(r, MAX_CONFIRM_RADIUS_CM)
-        if not radii and not dormant_rows:
+        own = self._own_actors(live)
+        # Direct evidence: the game reports the row's own site and it is not spawned. That needs
+        # no detection range at all, so it also holds beyond a learned one.
+        dormant = {k: (r, m) for k, (r, m, acts) in own.items() if not any(a.spawned is not False for a in acts)}
+        radii = {m: min(r, MAX_CONFIRM_RADIUS_CM) for m in self._markers if (r := radius_for(m))}
+        if not radii and not dormant:
             return False
-        # rows with direct evidence are judged even when their type has no learned range
-        direct = [
-            (r, key, marker, 0.0)
-            for marker, buckets in self._index.items()
-            if marker not in radii
-            for rows in buckets.values()
-            for r, key in rows
-            if key in dormant_rows
-        ] if dormant_rows else []
-
         changed = False
-        evaluated, candidates = 0, []
-        nearby = itertools.chain(
-            (
-                (r, key, marker, radius)
-                for marker, radius in radii.items()
-                for r, key in _near(self._index.get(marker, {}), pose.x, pose.y, radius)
-            ),
-            direct,
+        evaluated, candidates, judged = 0, [], set()
+        in_range = (
+            (r, key, marker)
+            for marker, radius in radii.items()
+            for r, key in _near(self._index.get(marker, {}), pose.x, pose.y, radius)
+            if math.hypot(r["x"] - pose.x, r["y"] - pose.y) <= radius
         )
-        for r, key, marker, radius in nearby:
-            if key not in dormant_rows and math.hypot(r["x"] - pose.x, r["y"] - pose.y) > radius:
-                continue
+        for r, key, marker in in_range:
             evaluated += 1
-            match_cm = MATCH_CM[marker in SPICE_SIZE]
-            bx, by = math.floor(r["x"] / match_cm), math.floor(r["y"] / match_cm)
-            near = [
-                a
-                for i in (-1, 0, 1)
-                for j in (-1, 0, 1)
-                for a in live_index.get((marker, bx + i, by + j), ())
-                if math.hypot(a.x - r["x"], a.y - r["y"]) <= match_cm
-            ]
-            if any(a.spawned is not False for a in near):
-                self._absent.pop(key, None)
-                if self.stale.pop(key, None) is not None:
-                    changed = True
-                continue
-            if key in self.stale:
-                continue
-            ab = self._absent.get(key)
-            if ab is None:
-                ab = self._absent[key] = _Absence(now, 0)
-            ab.snapshots += 1
-            # a downed ship: one snapshot is enough. Snapshots come ~20 s apart, so flying past you
-            # are in range for one; a hull that loads late is seen and un-staled right away.
-            if marker == SHIP_MARKER or (ab.snapshots >= MIN_ABSENT_SNAPSHOTS and now - ab.first_t >= MIN_ABSENT_S):
-                candidates.append((r, key, marker, "not spawned" if near else "absent"))
-
-        if candidates and len(candidates) >= BRAKE_MIN_ROWS and len(candidates) > BRAKE_SHARE * evaluated:
-            self.braked += 1
-            log.warning(
-                "safety brake: %d of %d nearby scan rows would go stale at once; not marking any", len(candidates), evaluated
-            )
-            for _, key, _, _ in candidates:
-                self._absent.pop(key, None)
-            return changed
+            judged.add(key)
+            unstaled, cand = self._judge(r, key, marker, own.get(key, (None, None, []))[2], now)
+            changed |= unstaled
+            candidates += [cand] if cand else []
+        for key, (r, marker) in dormant.items():
+            if key not in judged:
+                judged.add(key)
+                _, cand = self._judge(r, key, marker, own[key][2], now)
+                candidates += [cand] if cand else []
+        # absence must be consecutive: a row left out of range starts counting again on the next visit
+        self._absent = {k: v for k, v in self._absent.items() if k in judged}
+        candidates = self._brake(candidates, evaluated)
         for r, key, marker, reason in candidates:
             res = resource_of(marker)
             self.stale[key] = {

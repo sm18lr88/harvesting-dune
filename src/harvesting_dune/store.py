@@ -19,6 +19,8 @@ from enum import Enum
 from .model import Actor, Pose
 
 REMEMBER_SPICE_S = 45 * 60  # an active spice field stays on the map this long after it leaves range
+# spice sites sit at fixed places; the game can report one again under a new actor id
+SAME_SITE_CM = 1000.0
 
 
 class Status(str, Enum):
@@ -71,7 +73,11 @@ class ObservationStore:
         # away, plants only up close), so samples are kept per (world, marker).
         self._first_seen_distances: dict[tuple, list[float]] = {}
         self._primed = False  # first snapshot of a world only reflects the load-in position
+        # every loading screen reports no world, so items survive a trip back to the same one
+        self._last_real_world: tuple[str | None, int | None] | None = None
         self.saved_ranges: dict[str | None, dict[str, float]] = {}  # world id -> marker -> cm (earlier sessions)
+        self.renamed: list[tuple[str, str]] = []  # (old id, new id) of actors the last snapshot reloaded
+        self._unlisted: dict[tuple, str] | None = None  # place -> id of items the current snapshot omits
 
     # -- detection range -------------------------------------------------------------
     def detection_range_cm(self, marker: str | None = "spicefieldsmall") -> float | None:
@@ -108,43 +114,83 @@ class ObservationStore:
 
     # -- inputs ----------------------------------------------------------------------
     def set_world(self, world_id: str | None, seed: int | None) -> bool:
-        """Returns True when the world changed and tracked items were cleared."""
+        """Returns True when the world changed; items are cleared only for a different real world."""
         key = (world_id, seed)
-        if self.world is not None and self.world != key:
-            self.items.clear()
+        changed = self.world is not None and self.world != key
+        if changed:
+            if world_id is not None and key != self._last_real_world:
+                self.items.clear()
             self.pose = None  # a pose from the previous map is meaningless here
             self._primed = False
-            self.world = key
-            return True
         self.world = key
-        return False
+        if world_id is not None:
+            self._last_real_world = key
+        return changed
 
     def set_pose(self, pose: Pose) -> None:
         self.pose = pose
 
+    def _same_site(self, actor: Actor, listed: set[str]) -> Tracked | None:
+        """A tracked spice site at this actor's place under another id that this snapshot no longer lists."""
+        return next((t for k, t in self.items.items()
+                     if k not in listed and t.actor.marker == actor.marker
+                     and abs(t.actor.x - actor.x) <= SAME_SITE_CM and abs(t.actor.y - actor.y) <= SAME_SITE_CM), None)
+
+    def _reloaded(self, actor: Actor, listed: set[str]) -> Tracked | None:
+        """The tracked actor this one is, when the game loaded it again under a new id.
+
+        Ids look like `A:B:n` and a reload changes only B; one spawner lists several nodes at the
+        same place (`A:B:10`, `A:B:11`), so the place alone does not identify an actor.
+        """
+        place = _place(actor)
+        if place is None:
+            return None
+        if self._unlisted is None:  # built once per snapshot, at the first unknown id
+            self._unlisted = {p: k for k, t in self.items.items() if k not in listed and (p := _place(t.actor)) is not None}
+        old_key = self._unlisted.pop(place, None)
+        if old_key is None:
+            return None
+        item = self.items.pop(old_key)
+        self.items[actor.key] = item
+        self.renamed.append((old_key, actor.key))
+        return item
+
+    def _appeared(self, actor: Actor, now: float, listed: set[str], primed: bool) -> list[Change]:
+        dist = self.pose.dist2d(actor.x, actor.y) if self.pose else None
+        item = Tracked(actor, now, now, dist, Status.OFFLINE if actor.spawned is False else Status.LIVE)
+        if item.status is Status.LIVE:
+            item.last_live = now
+        item.dormant_since_live = actor.spawned is False
+        if actor.fill_rate is not None:
+            item.fill_history.append((now, actor.fill_rate))
+        changes = []
+        old = self._same_site(actor, listed) if actor.is_spice_field else None
+        if old is not None:
+            # the same site under a new id: what it shows now replaces what we remembered
+            del self.items[old.actor.key]
+            if old.dormant_since_live and actor.spawned is True:
+                changes.append(Change("spice_blow", item))
+        self.items[actor.key] = item
+        if primed and dist is not None and actor.marker is not None:
+            samples = self._first_seen_distances.setdefault((self.world, actor.marker), [])
+            samples.append(dist)
+            if len(samples) > 400:
+                del samples[:200]
+        changes.append(Change("appeared", item))
+        return changes
+
     def apply_snapshot(self, actors: list[Actor], now: float) -> list[Change]:
         changes: list[Change] = []
         seen: set[str] = set()
+        listed = {a.key for a in actors}
         primed, self._primed = self._primed, True
+        self.renamed, self._unlisted = [], None
         for actor in actors:
             seen.add(actor.key)
             new_status = Status.OFFLINE if actor.spawned is False else Status.LIVE
-            item = self.items.get(actor.key)
+            item = self.items.get(actor.key) or self._reloaded(actor, listed)
             if item is None:
-                dist = self.pose.dist2d(actor.x, actor.y) if self.pose else None
-                item = Tracked(actor, now, now, dist, new_status)
-                if new_status is Status.LIVE:
-                    item.last_live = now
-                item.dormant_since_live = actor.spawned is False
-                if actor.fill_rate is not None:
-                    item.fill_history.append((now, actor.fill_rate))
-                self.items[actor.key] = item
-                if primed and dist is not None and actor.marker is not None:
-                    samples = self._first_seen_distances.setdefault((self.world, actor.marker), [])
-                    samples.append(dist)
-                    if len(samples) > 400:
-                        del samples[:200]
-                changes.append(Change("appeared", item))
+                changes.extend(self._appeared(actor, now, listed, primed))
                 continue
             prev_fill = item.actor.fill_rate
             item.actor = actor
@@ -168,13 +214,14 @@ class ObservationStore:
                 before, item.status = item.status, new_status
                 changes.append(Change("status_changed", item, before))
 
-        radii = {m: r * 0.6 for m, r in self.learned_markers().items()}
-        if self._fixed_absence_radius is not None:
-            radii = None
+        radii: dict[str | None, float | None] = {}
         for key, item in self.items.items():
             if key in seen:
                 continue
-            radius = self._fixed_absence_radius if radii is None else radii.get(item.actor.marker)
+            marker = item.actor.marker
+            if marker not in radii:
+                radii[marker] = self.absence_radius_cm(marker)
+            radius = radii[marker]
             inside = (
                 radius is not None
                 and self.pose is not None
@@ -192,9 +239,11 @@ class ObservationStore:
         """Forget actors not loaded for a long time. Active spice fields are remembered longer."""
         drop = []
         for key, t in self.items.items():
-            if t.status in (Status.LIVE, Status.OFFLINE) and now - t.last_seen < 5:
-                continue  # currently loaded
-            keep_for = remember_spice_s if t.actor.is_spice_field and t.last_live is not None else forget_after_s
+            # Actors in the latest list are still loaded: the companion can stay quiet for over
+            # 20 min while the player stands still. The longer bound still clears a dead feed.
+            loaded = t.status in (Status.LIVE, Status.OFFLINE)
+            active_spice = t.actor.is_spice_field and t.last_live is not None
+            keep_for = remember_spice_s if loaded or active_spice else forget_after_s
             if now - t.last_seen > keep_for:
                 drop.append(key)
         for key in drop:
@@ -203,3 +252,11 @@ class ObservationStore:
 
     def spice_fields(self) -> list[Tracked]:
         return [t for t in self.items.values() if t.actor.is_spice_field]
+
+
+def _place(actor: Actor) -> tuple | None:
+    """What stays the same when the game reloads a non-spice actor (spice sites: `_same_site`)."""
+    parts = actor.key.split(":")
+    if len(parts) != 3 or actor.is_spice_field:
+        return None
+    return actor.marker, actor.actor_type, actor.x, actor.y, parts[0], parts[2]

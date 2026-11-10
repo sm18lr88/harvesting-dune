@@ -94,7 +94,7 @@ The settings page has three parts:
 
 - **What are you looking for?** One search for everything: map resources, parts and materials, unique gear and schematics, downed ships and wrecks. Typos are fine. Pick a result to make it your target. Below the search, you can also browse everything by class.
 - **Your target:** a card shows what you search, its status, the best place and where it drops. Here you also change the vehicle, turn the recommendations on or off, set your base and block a place.
-- **Sections:** the other settings are in sections. Click a section to open it: Minimap & lines, Deep Desert, Ships & wrecks, Rare loot nearby, Spice blows and Diagnostics. A closed section shows a short summary. The page remembers which sections are open.
+- **Sections:** the other settings are in sections. Click a section to open it: Lines & minimap, Deep Desert, Diagnostics, Ships & wrecks, Rare loot nearby, Spice blows, Guild and Characters. A closed section shows a short summary. The page remembers which sections are open.
 
 ### Lines on the minimap
 
@@ -149,12 +149,12 @@ Pick an item on the settings page. If someone farms it on a fixed route, a **Far
 | Setting | What it does |
 |---|---|
 | **PvP areas only** (Deep Desert) | On by default. The lines only go into PvP rows, because PvE yields are lower. Far PvP rows also count. The tool estimates them in a straight line. |
-| **PvE rows: A to …** | Rows A (south) to D are PvE by default. Rows E to I are PvP. Change the last PvE row if the game map shows a different border. |
+| **Last PvE row** | Rows A (south) to D are PvE by default. Rows E to I are PvP. Change the last PvE row if the game map shows a different border. |
 | **Lines start in row** (Deep Desert) | Row A by default: the lines show from the entrance. Select a later row, for example E, to see the lines only when you are that many rows into the Deep Desert. Before that row, the destination marker stays and the badge shows `lines from row E`. |
 | **PvP yield ×** | 2.5 by default. If "PvP areas only" is off, PvP areas count their yield × this value. |
 | **Max distance for lines** (km) | The lines only go to areas within this straight-line distance. 0 means no limit. The hotspot cell always looks at the complete map. |
 | **Minimap shows** | The resources on the minimap. The big map does not change. Your other filter choices in the companion (caves, loot, …) stay as they are. |
-| **Also on the minimap** | Buried treasure is hidden unless you tick it. It is not searched and gets no lines. |
+| **Extra markers** | Buried treasure is hidden unless you tick it. It is not searched and gets no lines. |
 | **Vehicle** | "auto" detects the vehicle from your motion. Select a vehicle to override the detection. |
 
 The companion keeps a separate filter list for the minimap but has no control for it. Thus, the minimap page reloads for one second to apply a change.
@@ -164,7 +164,7 @@ The companion keeps a separate filter list for the minimap but has no control fo
 Guild sync shares what you see with your guild. Your guild admin gives you a guild key.
 
 1. Open the settings page and find the **Guild** section.
-2. Paste the key and press **Save** (or Enter).
+2. Paste the key and press **Save key** (or Enter).
 3. The page shows the result next to the field: checking, connected as your character, key rejected, or server unreachable.
 
 The page never shows the key again. It shows only "key saved", with **Change** and **Remove**.
@@ -193,7 +193,7 @@ Guild data never changes the ranking. It only draws rings and lists. A scan row 
 
 Your own eyes always win. If you see a node live, a guild report never hides it. A node grows back after its respawn time. So a guild report hides a node only until that time has passed. Then the node shows again. A downed ship never comes back, so its report hides it until the report expires.
 
-**Pins:** a pin is a short label on the guild's minimap, like "IRON HERE". Press the pin hotkey (see Hotkeys) to drop a pin with your preset label. You can also type a label on the settings page, in the **Guild** section, and click **Drop pin**. The same field sets your preset label. The pin lands at the destination you set in the companion. With no destination, it lands where you stand. Every guildmate on the same map and layout sees a ring with your label. A pin goes away after two hours. Your own pins are listed on the settings page, and **Delete** removes one for everyone. If you hide a guildmate, you hide that guildmate's pins too. Pins never change the lines or the ranking.
+**Pins:** a pin is a short label on the guild's minimap, like "IRON HERE". Press the pin hotkey (see Hotkeys) to drop a pin with your preset label. You can also type a label on the settings page, in the **Guild** section, and click **Drop pin**. To change the label of the pin hotkey, type it in the field after "Ctrl+Alt+P drops". The pin lands at the destination you set in the companion. With no destination, it lands where you stand. Every guildmate on the same map and layout sees a ring with your label. A pin goes away after two hours. Your own pins are listed on the settings page, and **Delete** removes one for everyone. If you hide a guildmate, you hide that guildmate's pins too. Pins never change the lines or the ranking.
 
 **Pause sync** stops all sending and receiving. Your key stays saved.
 
@@ -247,7 +247,7 @@ The section **Ships & wrecks** has three searches. Each one leads you on one tri
 About downed ships:
 
 - The game shows a downed ship only within approximately 0.5 to 0.9 km. When it does, the badge shows `Downed ship! 0.9 km away` for 90 s, whatever resource you search.
-- Farther away, the tool uses the downed ships that other players reported to gaming.tools (its scan database). "Lead me to downed ships" includes them, marked "not yet confirmed live". When you come close and the game shows no ship there, the tool drops it.
+- Farther away, the tool uses the downed ships that other players reported to gaming.tools (its scan database). A search for downed ships includes them, marked "not yet confirmed live". When you come close and the game shows no ship there, the tool drops it.
 - The tool remembers the ship for 30 min after you leave. This time is an estimate.
 - The tool forgets the ship when you come within 400 m and the game does not show it any more (a sandworm took it), or when you opened all its containers.
 - Downed ships are targets in PvE rows too. "PvP areas only" is about yields, not about ships.
@@ -323,7 +323,7 @@ To save the result to share it, add the option `-Report`. The doctor saves the r
 | Log | Contents |
 |---|---|
 | `data\logs\errors.log` | All warnings and errors, from every part of the tool. Read this log first. |
-| `data\logs\detector.log` | Everything that the detector logs. The last 5 files stay (2 MB each). |
+| `data\logs\detector.log` | Everything that the detector logs. The current file and 5 older files stay (2 MB each). |
 | `data\install.log` | The output of the last install. |
 | `data\autorun.log` | If the watcher saw the companion and its DevTools port. |
 | `data-run.log` | The log of the detector. |
@@ -351,7 +351,7 @@ For the design, the module boundaries and how to run the tool by hand, read [How
 
 - **On your PC:** install [Inno Setup 6](https://jrsoftware.org/isinfo.php). Then run `iscc /DAppVersion=1.2.3 installer\harvesting-dune.iss`. The installer goes to `dist\`.
 - **The ZIP file:** run `powershell -ExecutionPolicy Bypass -File installer\build-zip.ps1 -Version 1.2.3`. The file goes to `dist\`. `installer\test-zip.ps1` installs it, installs it again and uninstalls it.
-- **On GitHub:** publish a release. The "Release installer" workflow builds the installer and the ZIP file, tests them, and attaches them to the release. To build a test installer without a release, run the workflow by hand in the Actions tab.
+- **On GitHub:** first set `version` in `pyproject.toml` to the release number and run `uv lock`. Then publish a release with that number as its tag. The workflow stops when the tag and the version differ. The "Release installer" workflow builds the installer and the ZIP file, tests them, and attaches them to the release. To build a test installer without a release, run the workflow by hand in the Actions tab.
 - Each push also runs the "CI" workflow: the tests, the lint check and a check of the PowerShell scripts.
 
 ## License

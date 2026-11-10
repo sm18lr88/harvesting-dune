@@ -31,23 +31,26 @@ class ObjectStoreMixin:
     def upsert_objects(self, key_id: str, identity: dict, uploads: list[dict], now: float) -> int:
         """Store parsed uploads (objects.parse_object), each with the next rev; `ttlS` 0 leaves a tombstone.
         ObjectCap (nothing written) when a live upload would pass a cap. Returns the number stored."""
-        group = identity["battlegroupId"]
         with self._tx() as c:
-            rev = _rev(c)
-            for n, u in enumerate(uploads):
-                if u["ttlS"] > 0:
-                    self._check_caps(c, key_id, group, u["id"], now, f"objects[{n}]")
-                rev += 1
-                scope, geometry = u["scope"] or {}, u["geometry"]
-                c.execute(
-                    f"INSERT OR REPLACE INTO objects({_OBJECT_COLS}) VALUES ({', '.join('?' * 13)})",
-                    (key_id, u["id"], group, identity["characterId"], identity["characterName"], u["kind"],
-                     scope.get("worldId"), scope.get("layout"), None if geometry is None else json.dumps(geometry),
-                     u["body"], now + min(u["ttlS"], MAX_OBJECT_TTL_S), now, rev),
-                )
-            self._trim_objects(c, key_id, now)
-            c.execute("UPDATE meta SET v = ? WHERE k = 'rev'", (str(rev),))
+            self._put_objects(c, key_id, identity, uploads, now)
         return len(uploads)
+
+    def _put_objects(self, c, key_id: str, identity: dict, uploads: list[dict], now: float) -> None:
+        group = identity["battlegroupId"]
+        rev = _rev(c)
+        for n, u in enumerate(uploads):
+            if u["ttlS"] > 0:
+                self._check_caps(c, key_id, group, u["id"], now, f"objects[{n}]")
+            rev += 1
+            scope, geometry = u["scope"] or {}, u["geometry"]
+            c.execute(
+                f"INSERT OR REPLACE INTO objects({_OBJECT_COLS}) VALUES ({', '.join('?' * 13)})",
+                (key_id, u["id"], group, identity["characterId"], identity["characterName"], u["kind"],
+                 scope.get("worldId"), scope.get("layout"), None if geometry is None else json.dumps(geometry),
+                 u["body"], now + min(u["ttlS"], MAX_OBJECT_TTL_S), now, rev),
+            )
+        self._trim_objects(c, key_id, now)
+        c.execute("UPDATE meta SET v = ? WHERE k = 'rev'", (str(rev),))
 
     def _check_caps(self, c, key_id: str, group: str, object_id: str, now: float, field: str) -> None:
         """Counted in the writing transaction, so uploads earlier in the request count too; the row

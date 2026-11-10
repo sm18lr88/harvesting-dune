@@ -1,13 +1,16 @@
 import time
 
 import pytest
-from helpers import CELL_CM, M, mountain, ore, payload, spice
+from helpers import CELL_CM, M, actors, mountain, ore, payload, pose, session, spice
 
+from harvesting_dune.app import Detector
 from harvesting_dune.areas import Node, recommend
 from harvesting_dune.catalog import BY_KEY, marker_of
-from harvesting_dune.model import Pose, parse_actors
+from harvesting_dune.feed import BusMessage
+from harvesting_dune.model import ActorParser, Pose, parse_actors
 from harvesting_dune.store import ObservationStore, Status
-from harvesting_dune.terrain import VEHICLES, TerrainGrid
+from harvesting_dune.terrain import VEHICLES, TerrainGrid, cell_of
+from harvesting_dune.vehicle import VehicleDetector
 
 P0 = Pose(0, 0, 0)
 
@@ -24,6 +27,12 @@ def test_parse_actors_matches_companion_shape():
     acts = parse_actors(payload(spice(1, 10, 20, "Large"), {"actorType": "Ore", "x": "bad", "y": 1}, ore(2, 1, 2, 3)))
     assert acts[0].key == "1" and acts[0].spice_size == "large" and acts[0].marker == "spicefieldlarge"
     assert len(acts) == 2 and acts[1].marker == "magnetiteore" and not acts[1].is_spice_field
+
+
+def test_parse_actors_drops_fields_of_the_wrong_type():
+    odd = {"id": [1], "actorType": 5, "markerType": 7, "x": 1.0, "y": 2.0}
+    acts = ActorParser().parse(payload(odd, {**spice(2, 0, 0), "actorType": {"a": 1}}))
+    assert [a.actor_type for a in acts] == [None, None] and acts[1].is_spice_field
 
 
 # -- store ------------------------------------------------------------------------------
@@ -175,3 +184,128 @@ def test_a_real_haul_a_short_flight_away_beats_a_tiny_cluster_next_to_you():
     big = [("rhyoliteore", 2_000 * M + (i % 5) * 1500, (i // 5) * 1500, 0, "live", None) for i in range(20)]
     res = recommend(BY_KEY["granite"], nodes(*tiny, *big), P0, TerrainGrid(), VEHICLES["ornithopter"], top=0)
     assert len(res[0].nodes) == 20
+
+
+# -- what counts as ground, and which vehicle left a track --------------------------------
+NOW = 1794160000.0  # a live wall-clock stamp
+
+
+def heights(det):
+    return {c for c, ev in det.grid.cells.items() if ev.z_n}
+
+
+def driven(det):
+    return {v for ev in det.grid.cells.values() for v in ev.driven_by}
+
+
+def test_a_fast_ride_the_session_calls_on_foot_leaves_no_ground_heights(tmp_path):
+    det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+    session(det, "DD")  # the session says Exploration, but you cross the sand at 180 km/h, 300 m up
+    for i in range(10):
+        pose(det, i * 5000.0, 0, z=30000.0, t=i)
+    assert heights(det) == {cell_of(0.0, 0.0)}  # only the first pose: it has no speed to judge yet
+
+
+def test_a_passenger_seat_is_not_ground_height(tmp_path):
+    det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+    session(det, "DD", activity=None, state="CharacterState.State.Passenger")
+    for i in range(5):
+        pose(det, i * 100.0, 0, z=30000.0, t=i)  # carried slowly, 300 m above the sand
+    assert heights(det) == set()
+
+
+def test_a_sandworm_breach_is_not_ground_height(tmp_path):
+    det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+    session(det, "DD")
+    actors(det, {"id": "w1", "actorType": "BP_Crea_SandwormArrakis_C", "markerType": "SandwormBreach",
+                 "x": 500 * M, "y": 0, "z": 20000.0}, t=1)
+    assert heights(det) == set()
+
+
+def test_boarding_after_a_passenger_ride_takes_the_ground_you_last_stood_on():
+    vd = VehicleDetector()
+    vd.on_session("Exploration", "CharacterState.State.Exploration")
+    vd.on_pose(0, Pose(0, 0, 0), None)  # standing on the sand
+    vd.on_session(None, "CharacterState.State.Passenger")
+    vd.on_pose(1, Pose(100, 0, 30000), None)  # a passenger seat 300 m up
+    vd.on_session("Driving", "CharacterState.State.Driving")
+    for i in range(12):  # now flying it yourself, 90 m above that sand
+        vd.on_pose(2 + i, Pose(100 + 1900 * i, 0, 9000), None)
+    assert vd.current == "ornithopter"
+
+
+def low_take_off(det):
+    """Skims the sand at buggy speed for 12 s, then climbs away."""
+    for i in range(12):
+        pose(det, 10 + 1900 * i, 5, z=0, t=i)
+    for k in range(1, 8):
+        pose(det, 10 + 1900 * (11 + k), 5, z=1500 * k, t=11 + k)
+
+
+def test_a_flight_that_starts_low_and_slow_leaves_no_driven_tracks(tmp_path):
+    det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+    session(det, "DD", activity="Driving")
+    low_take_off(det)
+    assert det.vehicles.current == "ornithopter" and driven(det) == set()
+
+
+def test_a_flight_that_starts_low_and_slow_keeps_the_last_spice_harvester(tmp_path):
+    det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+    det.vehicles.last_harvester = "sandcrawler"
+    session(det, "DD", activity="Driving")
+    low_take_off(det)
+    assert det.vehicles.last_harvester == "sandcrawler"
+
+
+def test_a_vehicle_choice_does_not_make_the_boarding_guess_leave_tracks(tmp_path):
+    det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+    det.ui("vehicle", "sandbike")
+    session(det, "DD", activity="Driving")
+    for i in range(7):  # 7 s at buggy speed: too short for motion to say which vehicle this is
+        pose(det, 10 + 1900 * i, 5, z=0, t=i)
+    assert driven(det) == set()
+
+
+def test_a_vehicle_choice_does_not_make_the_boarding_guess_the_spice_harvester():
+    vd = VehicleDetector()
+    vd.last_vehicle, vd.last_harvester = "buggy", "sandcrawler"
+    vd.set_override("ornithopter")
+    vd.on_session("Driving", "CharacterState.State.Driving")
+    vd.on_pose(0, Pose(0, 0, 0), None)
+    assert vd.last_harvester == "sandcrawler"
+
+
+def _ship(x=0.0, y=290_000.0):
+    return {"id": "s1", "actorType": "BP_SmallShipwreck_01_C", "markerType": "SalvageSteel", "spriteKey": "salvagesteel",
+            "x": x, "y": y, "z": 0.0, "reportable": True}
+
+
+def test_a_ship_seen_just_after_the_wall_clock_steps_back_is_not_aged(tmp_path):
+    det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+    session(det, "deepdesert_1", t=NOW)
+    pose(det, 0.0, 380_000.0, t=NOW + 3600)  # the PC clock ran 1 h fast
+    det.handle(BusMessage("delta", "dune.map.actors", payload(_ship(), world="deepdesert_1")), NOW + 1)  # corrected
+    assert len(det.ships.active(det.clock)) == 1
+
+
+def test_a_stale_scan_row_seen_again_after_the_wall_clock_steps_back_is_restored(tmp_path):
+    det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+    det.store.saved_ranges = {"DD": {"spicefieldlarge": 2000 * M}}
+    session(det, "DD", t=NOW)
+    pose(det, 914400 - 500 * M, -304800, t=NOW)
+    det.load_scan([{"type": "BP_SpiceField_Large_C", "map_marker_id": "spicefieldlarge", "x": 914400, "y": -304800, "z": 0}], 200, NOW)
+    for dt in (3600, 3603, 3607, 3611):  # the PC clock ran 1 h fast; the site reports itself empty
+        actors(det, spice("site", 914400, -304800, "Large", fill=0, spawned=False), t=NOW + dt)
+    assert det.scan.stale
+    for dt in (1, 3):  # corrected; the site is active again
+        actors(det, spice("site", 914400, -304800, "Large", fill=1, spawned=True), t=NOW + dt)
+    assert det.scan.stale == {}
+
+
+def test_driving_after_the_wall_clock_steps_back_still_leaves_tracks(tmp_path):
+    det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+    session(det, "DD", activity="Driving", t=NOW)
+    pose(det, 10, 5, z=0, t=NOW + 3600)  # the PC clock ran 1 h fast
+    for i in range(1, 14):  # corrected; a buggy drives on
+        pose(det, 10 + 1900 * i, 5, z=0, t=NOW + i)
+    assert driven(det) == {"buggy"}

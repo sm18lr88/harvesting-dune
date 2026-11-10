@@ -33,6 +33,7 @@ class CharacterState:
     fetched_at: float = -math.inf
     fetch_forced: bool = False
     since: int = 0  # the server's profile cursor
+    scope: str | None = None  # the battlegroup `since` and `guild` are about: one rev for all, rows per battlegroup
     guild: dict = field(default_factory=dict)  # character id -> {name, updatedAt, rev, profile}
 
 
@@ -121,14 +122,19 @@ class CharacterMixin:
 
     def characters_opened(self) -> None:
         """The settings page shows the Characters view: fetch now, and keep fetching while it stays open."""
-        c = self.chars
-        c.open_at, c.fetch_forced = time.time(), True
-        self.sync_wake()
+        c, now = self.chars, time.time()
+        reopened = now - c.open_at > OPEN_S  # else the view's 60 s "still open": the loop's next tick fetches, no sync
+        c.open_at, c.fetch_forced = now, True
+        if reopened:
+            self.sync_wake()
 
     def profiles_request(self, now: float) -> dict | None:
         ident, c = self._profile_ident(), self.chars
         if ident is None or time.time() - c.open_at > OPEN_S:
             return None
+        if c.scope != ident["battlegroupId"]:  # another character's battlegroup: all of its profiles, now
+            c.guild.clear()
+            c.since, c.scope, c.fetch_forced = 0, ident["battlegroupId"], True
         if not c.fetch_forced and now - c.fetched_at < FETCH_EVERY_S:
             return None
         return {"identity": ident, "since": c.since}
@@ -191,6 +197,8 @@ class CharacterMixin:
         elif cid in self.chars.guild:
             g = self.chars.guild[cid]
             body = {"name": g["name"], "self": False, "ageS": round(time.time() - g["updatedAt"]), "profile": g["profile"]}
+        elif cid in self.peers.members:  # listed from presence alone: the pane says so instead of asking for a pick
+            body = {"name": self.peers.members[cid]["characterName"], "self": False, "ageS": None, "profile": None}
         else:
             return None
         recipes = (body["profile"] or {}).get("recipes")

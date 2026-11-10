@@ -22,6 +22,7 @@ import zlib
 from importlib import resources
 
 from . import statuspage
+from .fsutil import parse_json
 from .peers import MAX_RECORDS
 from .peerview import WIRE_CELL_CM
 
@@ -113,7 +114,7 @@ def _wire_key(record: dict) -> tuple:
             math.floor(record["x"] / WIRE_CELL_CM), math.floor(record["y"] / WIRE_CELL_CM))
 
 
-def _decoded(raw: bytes, encoding: str | None) -> dict:
+def _decoded(raw: bytes, encoding: str | None, loads=json.loads) -> dict:
     if (encoding or "").lower() == "gzip":
         inflater = zlib.decompressobj(16 + zlib.MAX_WBITS)
         try:
@@ -121,7 +122,7 @@ def _decoded(raw: bytes, encoding: str | None) -> dict:
         except zlib.error:
             raise SyncServerError(200) from None
     try:
-        out = json.loads(raw)
+        out = loads(raw)
     except ValueError:
         raise SyncServerError(200) from None
     if not isinstance(out, dict):
@@ -160,7 +161,9 @@ class SyncClient:
         if etag:
             headers["If-None-Match"] = etag
         raw, got = self._open(urllib.request.Request(f"{self.server}{path}", headers=headers, method="GET"))
-        return (None if raw is None else _decoded(raw, got.get("Content-Encoding"))), got.get("ETag")
+        # a dataset is cached as a file, and the cache refuses what write_json never emits (NaN, Infinity)
+        body = None if raw is None else _decoded(raw, got.get("Content-Encoding"), lambda b: parse_json(b.decode("utf8")))
+        return body, got.get("ETag")
 
     def _open(self, req: urllib.request.Request) -> tuple[bytes | None, object]:
         """(body, headers); body None for a 304. Raises a SyncError subclass."""

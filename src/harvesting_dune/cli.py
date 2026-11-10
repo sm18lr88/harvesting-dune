@@ -1,4 +1,8 @@
 # CLI: the harvesting-dune command (run, replay, stats) and the composition of a live run.
+"""`run` is the only place that wires the Detector to the companion, the settings server and the
+log files. `replay` and `stats` read recorded journals offline, so ranking and detection ranges can
+be checked without the game running."""
+
 from __future__ import annotations
 
 import argparse
@@ -6,7 +10,7 @@ import asyncio
 import json
 import logging
 import statistics
-import time
+import sys
 from pathlib import Path
 
 from . import logsetup
@@ -42,14 +46,20 @@ async def _run(args: argparse.Namespace) -> None:
         server.close()
         if hasattr(server, "close_clients"):  # Python 3.13+
             server.close_clients()
+        det.journal.close()  # a stop the runner saw ends the file cleanly, not only the process exit
 
 
 def _journal_messages(path: Path) -> list[tuple[float, BusMessage]]:
-    out = []
+    out, bad = [], 0
     with path.open(encoding="utf8") as fh:
         for line in fh:
-            rec = json.loads(line)
-            out.append((rec["t"], BusMessage(rec["type"], rec["topic"], rec["payload"])))
+            try:  # a hard kill mid-write leaves a cut-off last line
+                rec = json.loads(line)
+                out.append((rec["t"], BusMessage(rec["type"], rec["topic"], rec["payload"])))
+            except (ValueError, KeyError, TypeError):
+                bad += 1
+    if bad:
+        log.warning("%s: skipped %s unreadable line(s)", path.name, bad)
     return out
 
 
@@ -58,10 +68,13 @@ def _replay(args: argparse.Namespace) -> None:
     det.ui("resource", args.resource)
     if args.vehicle != "auto":
         det.ui("vehicle", args.vehicle)
-    for t, msg in _journal_messages(Path(args.journal)):
+    path = Path(args.journal)
+    if not path.is_file():
+        sys.exit(f"no such journal: {path}")
+    for t, msg in _journal_messages(path):
         det.handle(msg, t)
         det.maybe_rescore(t)
-    det.compute(time.time())
+    det.compute(det.clock)  # the wall clock would age out every field of an old recording
     snap = det.snapshot()
     print(json.dumps({k: v for k, v in snap.items() if k != "areas"}, indent=2))
     for i, a in enumerate(a for a in snap["areas"] if a["feasible"]):
@@ -73,33 +86,65 @@ def _replay(args: argparse.Namespace) -> None:
 def _stats(args: argparse.Namespace) -> None:
     """Detection-range and topic statistics from journals: answers "how far away does
     the companion see a spice field, regardless of where I am looking"."""
+    paths = sorted(Path(args.journal_dir).glob("*.jsonl"))
+    if not paths:
+        sys.exit(f"no journals in {args.journal_dir}")
     topics: dict[str, int] = {}
-    first_seen: dict[str, float] = {}
-    pose: Pose | None = None
-    loaded = False
-    fields: list[dict] = []
-    for path in sorted(Path(args.journal_dir).glob("*.jsonl")):
-        for t, msg in _journal_messages(path):
-            topics[msg.topic or "?"] = topics.get(msg.topic or "?", 0) + 1
-            if msg.topic == "dune.player":
-                pose = parse_pose(msg.payload) or pose
-            elif msg.topic == "dune.map.actors":
-                for a in parse_actors(msg.payload):
-                    if a.key in first_seen or not a.is_spice_field:
-                        first_seen.setdefault(a.key, t)
-                        continue
-                    first_seen[a.key] = t
-                    if loaded and pose is not None:
-                        fields.append({"size": a.spice_size, "dist_m": pose.dist2d(a.x, a.y) / 100, "fill": a.fill_rate})
-                loaded = True
+    fields = _fields_after_load_in(paths, topics)
     print("messages per topic:", json.dumps(topics, indent=2))
     dists = [f["dist_m"] for f in fields]
     if dists:
-        q = statistics.quantiles(dists, n=10) if len(dists) >= 2 else dists
+        # the default "exclusive" method extrapolates past the data: a p90 above the maximum
+        q = statistics.quantiles(dists, n=10, method="inclusive") if len(dists) >= 2 else dists
         print(f"spice fields first observed after load-in: {len(dists)}")
         print(f"first-seen distance m: min {min(dists):.0f}  median {statistics.median(dists):.0f}  p90 {q[-1]:.0f}  max {max(dists):.0f}")
     else:
         print("no spice fields appeared after load-in yet; drive around the Deep Desert with the feed running")
+
+
+def _fields_after_load_in(paths: list[Path], topics: dict[str, int]) -> list[dict]:
+    seen: set = set()
+    fields: list[dict] = []
+    for path in paths:
+        load_in = _LoadIn()  # every journal starts with one
+        for _t, msg in _journal_messages(path):
+            topics[msg.topic or "?"] = topics.get(msg.topic or "?", 0) + 1
+            fields += load_in.new_fields(msg, seen)
+    return fields
+
+
+class _LoadIn:
+    """Spice fields that appeared while the player was already in the world. A journal and a
+    map change both start with a load-in list of what was there before, which says nothing
+    about detection range; an empty list (the main menu) is not that load-in."""
+
+    def __init__(self) -> None:
+        self.pose: Pose | None = None
+        self.loaded = False
+        self.world = None
+
+    def new_fields(self, msg: BusMessage, seen: set) -> list[dict]:
+        if msg.topic == "dune.session":
+            w = msg.payload.get("worldId") if isinstance(msg.payload, dict) else None
+            if isinstance(w, str) and w and w != self.world:  # anything else is a loading screen, as in ingest
+                self.pose, self.loaded, self.world = None, False, w
+        elif msg.topic == "dune.player":
+            self.pose = parse_pose(msg.payload) or self.pose
+        elif msg.topic == "dune.map.actors":
+            acts = parse_actors(msg.payload)
+            out = _new_fields(acts, seen, self.pose if self.loaded else None)
+            self.loaded = self.loaded or bool(acts)
+            return out
+        return []
+
+
+def _new_fields(acts: list, seen: set, pose: Pose | None) -> list[dict]:
+    out = []
+    for a in acts:
+        if a.key not in seen and a.is_spice_field and pose is not None:
+            out.append({"size": a.spice_size, "dist_m": pose.dist2d(a.x, a.y) / 100, "fill": a.fill_rate})
+        seen.add(a.key)
+    return out
 
 
 def main() -> None:

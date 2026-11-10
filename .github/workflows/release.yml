@@ -11,9 +11,12 @@ permissions:
   contents: write  # to attach the installer to the release
 
 jobs:
-  installer:
+  # the installer and the zip are built only from a commit whose tests pass, and with this one version
+  test:
     runs-on: windows-latest
     timeout-minutes: 30
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -23,22 +26,38 @@ jobs:
 
       - name: Tests
         run: |
-          uv sync
+          uv sync --locked
           uv run pytest -q
 
       - name: Version
         id: version
         shell: pwsh
         run: |
+          $base = (Select-String -Path pyproject.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
           $tag = '${{ github.event.release.tag_name }}'
           if ($tag) {
             $version = $tag.TrimStart('v')
+            # the installed app, its problem reports and the guild server read the pyproject version, never the tag
+            if ($version -ne $base) { throw "release tag $tag does not match version $base in pyproject.toml: set it there, run 'uv lock', then tag again" }
           } else {
-            $base = (Select-String -Path pyproject.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
             $version = "$base-dev.${{ github.run_number }}"
           }
           "version=$version" >> $env:GITHUB_OUTPUT
-          Write-Host "Installer version: $version"
+          Write-Host "Release version: $version"
+
+  installer:
+    needs: test
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || github.ref }}
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install (for the throwaway local guild server)
+        run: uv sync --locked
 
       - name: Build the installer (Inno Setup)
         shell: pwsh
@@ -48,17 +67,35 @@ jobs:
             choco install innosetup -y --no-progress
             if ($LASTEXITCODE) { throw "Inno Setup install failed" }
           }
-          & $iscc /Q "/DAppVersion=${{ steps.version.outputs.version }}" installer\harvesting-dune.iss
+          & $iscc /Q "/DAppVersion=${{ needs.test.outputs.version }}" installer\harvesting-dune.iss
           if ($LASTEXITCODE) { throw "ISCC failed with exit code $LASTEXITCODE" }
           Get-ChildItem dist\*.exe | Format-Table Name, Length
 
+      # no secret: as installer\test-zip.ps1, a throwaway local guild server (test certificates) checks a throwaway key
       - name: Test the installer (silent install without autorun, then uninstall)
         shell: pwsh
         run: |
+          $py = "$PWD\.venv\Scripts\python.exe"
+          $certs = "$PWD\tests\certs"
+          $db = Join-Path $env:RUNNER_TEMP 'guild.sqlite'
+          $l = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0); $l.Start(); $port = $l.LocalEndpoint.Port; $l.Stop()
+          $env:PYTHONPATH = "$PWD\server"
+          $guild = Start-Process $py -PassThru -WindowStyle Hidden -ArgumentList '-m', 'guildsync', '--db', "`"$db`"", '--cert', "`"$certs\test-server.pem`"", '--key', "`"$certs\test-server.key`"", '--host', '127.0.0.1', '--port', $port
+          $up = $false
+          for ($i = 0; $i -lt 60 -and -not $up; $i++) {
+            $c = [Net.Sockets.TcpClient]::new()
+            try { $c.Connect('127.0.0.1', $port); $up = $true } catch { Start-Sleep -Milliseconds 500 } finally { $c.Close() }
+          }
+          if (-not $up) { throw 'the local guild server did not open its port in 30 s' }
+          $env:HARVESTING_DUNE_KEY = "$(& $py -m guildsync.keysctl --db $db issue --label ci-throwaway)".Trim()
+          if ($LASTEXITCODE -or -not $env:HARVESTING_DUNE_KEY) { throw 'keysctl could not issue a key' }
           $exe = (Get-Item dist\harvesting-dune-setup-*.exe).FullName
           $dir = Join-Path $env:RUNNER_TEMP 'harvesting-dune'
-          $p = Start-Process $exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/TASKS=""', "/DIR=`"$dir`"", "/LOG=`"$env:RUNNER_TEMP\setup.log`"" -Wait -PassThru
-          if ($p.ExitCode) { Get-Content "$env:RUNNER_TEMP\setup.log" -Tail 40; throw "setup exit code $($p.ExitCode)" }
+          $p = Start-Process $exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/TASKS=""', "/DIR=`"$dir`"", "/LOG=`"$env:RUNNER_TEMP\setup.log`"", "/SYNCSERVER=https://127.0.0.1:$port", "/CAFILE=`"$certs\test-ca.pem`"" -Wait -PassThru
+          Stop-Process -Id $guild.Id -Force -ErrorAction SilentlyContinue
+          if ($p.ExitCode) { Get-Content "$env:RUNNER_TEMP\setup.log" -Tail 40; Get-Content "$dir\data\install.log" -Tail 40 -ErrorAction SilentlyContinue; throw "setup exit code $($p.ExitCode)" }
+          # the detector starts after step 5 already; only "Done." shows the guild key step passed too
+          if (-not (Select-String -LiteralPath "$dir\data\install.log" -Pattern '^Done\.' -Quiet)) { Get-Content "$dir\data\install.log" -Tail 40; throw 'install.ps1 did not finish' }
           & "$dir\.venv\Scripts\harvesting-dune.exe" --help
           if ($LASTEXITCODE) { Get-Content "$dir\data\install.log" -Tail 40; throw "the installed detector does not start" }
           $p = Start-Process "$dir\unins000.exe" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
@@ -68,7 +105,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: harvesting-dune-setup-${{ steps.version.outputs.version }}
+          name: harvesting-dune-setup-${{ needs.test.outputs.version }}
           path: dist/*.exe
           if-no-files-found: error
 
@@ -81,6 +118,7 @@ jobs:
 
   zip:
     # harvesting-dune-<version>.zip: extract, double-click Install.cmd (README "Install")
+    needs: test
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -88,22 +126,16 @@ jobs:
         with:
           ref: ${{ github.event.release.tag_name || github.ref }}
 
-      - name: Version
-        id: version
-        shell: pwsh
-        run: |
-          $tag = '${{ github.event.release.tag_name }}'
-          if ($tag) {
-            $version = $tag.TrimStart('v')
-          } else {
-            $base = (Select-String -Path pyproject.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
-            $version = "$base-dev.${{ github.run_number }}"
-          }
-          "version=$version" >> $env:GITHUB_OUTPUT
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: false
+
+      - name: Install (for the throwaway local guild server; uv is hidden afterwards)
+        run: uv sync --locked
 
       - name: Build the zip
         shell: powershell
-        run: powershell -ExecutionPolicy Bypass -File installer\build-zip.ps1 -Version '${{ steps.version.outputs.version }}'
+        run: powershell -ExecutionPolicy Bypass -File installer\build-zip.ps1 -Version '${{ needs.test.outputs.version }}'
 
       - name: Hide any uv on this runner (a guildmate's PC has none)
         shell: powershell
@@ -117,11 +149,11 @@ jobs:
 
       - name: Test the zip (install, install again, uninstall)
         shell: powershell
-        run: powershell -ExecutionPolicy Bypass -File installer\test-zip.ps1 -Zip 'dist\harvesting-dune-${{ steps.version.outputs.version }}.zip' -WorkDir "$env:RUNNER_TEMP\zip test"
+        run: powershell -ExecutionPolicy Bypass -File installer\test-zip.ps1 -Zip 'dist\harvesting-dune-${{ needs.test.outputs.version }}.zip' -WorkDir "$env:RUNNER_TEMP\zip test" -LocalGuildPython "$PWD\.venv\Scripts\python.exe"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: harvesting-dune-${{ steps.version.outputs.version }}-zip
+          name: harvesting-dune-${{ needs.test.outputs.version }}-zip
           path: dist/*.zip
           if-no-files-found: error
 

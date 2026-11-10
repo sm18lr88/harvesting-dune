@@ -16,6 +16,7 @@ from guildsync.presence import GRACE_S, OFFLINE_KEEP_S
 from guildsync.storage import Storage
 from helpers import pose, session
 from test_robustness import free_port
+from test_sync_receive import detector, member, response
 from test_sync_integration import ALPHA, Player, Stop, issue
 
 from harvesting_dune import syncloop
@@ -458,3 +459,18 @@ def test_records_staged_by_one_character_never_go_out_as_another():
     assert client.stage([seen], (1001, part)) == [seen]  # sent, not acknowledged yet
     assert client.stage([], (1001, part)) == [seen]
     assert client.stage([], (1002, part)) == []  # another character: dropped, not sent as its own
+
+
+def test_a_member_we_lost_contact_with_is_demoted_locally_on_the_feed_clock():
+    det = detector()
+    det.clock = 1000.0
+    det.ingest_peer(response(presence=[{**member(2002, "Guildmate", x=50000.0, age=0.0), "state": "online", "lastNextS": 15}]), 5.0)
+    [full] = det.peer_marks()
+    assert full["color"] == "rgba(255,230,120,0.75)"
+    det.clock = 1000.0 + 15 + 21  # no answer since: past the heartbeat's deadline plus grace
+    [late] = det.peer_marks()
+    assert float(late["color"].rsplit(",", 1)[1][:-1]) < 0.75
+    assert [m["state"] for m in det.peers_snapshot()["members"] if not m["self"]] == ["late"]
+    det.clock = 1000.0 + 3 * 15 + 21
+    assert det.peer_marks() == []
+    assert [m["state"] for m in det.peers_snapshot()["members"] if not m["self"]] == ["offline"]

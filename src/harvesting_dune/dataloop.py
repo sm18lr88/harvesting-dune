@@ -16,7 +16,7 @@ import time
 
 from . import logsetup
 from .datacache import NAMES, DataCache
-from .gate import REFUSED
+from .gate import AHEAD_S, REFUSED
 from .sync import SyncClient, SyncError, SyncRejected
 
 log = logging.getLogger(__name__)
@@ -50,6 +50,7 @@ class DataLoop:
         for name, data in self.cache.load().items():
             if not self.det.on_dataset(name, data):
                 log.warning("cached dataset %s is not usable; it is fetched again", name)
+                self.cache.forget(name)
         self.key = self.det.sync_key
         if self.det.key_checked_at is None:
             self.det.key_checked_at = self.cache.checked_at(self.key)
@@ -65,6 +66,8 @@ class DataLoop:
         det, now, key = self.det, self.clock(), self.det.sync_key
         if key != self.key:  # a new key (or none): check it at once
             self.key, self.due, self.failures = key, 0.0, 0
+        if det.key_checked_at is not None and det.key_checked_at - now > AHEAD_S:
+            self.due = 0.0  # the PC clock stepped back past the last check: the gate shuts until a new one
         if key is not None:
             self.cache.note_check(key, det.key_checked_at)
         det.gate_poll(now)
@@ -76,23 +79,47 @@ class DataLoop:
         """The list (the key check), then each changed dataset."""
         try:
             listed = await self._listing(key)
+            if self.det.sync_key != key:
+                return  # the player saved another key while we waited: this answer says nothing about it
             self.det.key_checked(now)
             self.cache.note_check(key, now)
-            self.failures, self.due = 0, now + DAY_S
-            for name in NAMES:
-                if name in listed and listed[name] != self.cache.etag(name):
-                    await self._fetch(key, name)
+            failed = await self._fetch_changed(key, listed)
+            if failed is None:
+                self.failures, self.due = 0, now + DAY_S
+            else:  # the key is fine: only the dataset is retried, with the same backoff as the list
+                wait = self._back_off(now)
+                logsetup.limited(log, "data:fetch", "dataset %s failed (%s); retrying in %.0f s", *failed, wait,
+                                 level=logging.WARNING)
         except SyncRejected as exc:
             if self.det.sync_key == key:
                 self.det.key_refused(exc.state)
                 self.cache.note_check(key, None)
             logsetup.limited(log, "data:rejected", "guild server refused the key (%s)", exc.reason, level=logging.WARNING)
         except SyncError as exc:
-            wait = RETRY_S[min(self.failures, len(RETRY_S) - 1)]
-            self.failures, self.due = self.failures + 1, now + wait
-            self.det.key_unchecked(exc.reason)
+            wait = self._back_off(now)
+            if self.det.sync_key == key:
+                self.det.key_unchecked(exc.reason)
             logsetup.limited(log, "data:down", "dataset check failed (%s); retrying in %.0f s", exc.reason, wait,
                              level=logging.WARNING)
+
+    def _back_off(self, now: float) -> float:
+        wait = RETRY_S[min(self.failures, len(RETRY_S) - 1)]
+        self.failures, self.due = self.failures + 1, now + wait
+        return wait
+
+    async def _fetch_changed(self, key: str, listed: dict[str, str]) -> tuple[str, str] | None:
+        """Fetch each dataset whose ETag changed, each on its own so one failing dataset never holds back
+        the others; (name, reason) of the last one that failed, or None. A 401 still refuses the key."""
+        failed = None
+        for name in NAMES:
+            if name in listed and listed[name] != self.cache.etag(name):
+                try:
+                    await self._fetch(key, name)
+                except SyncRejected:
+                    raise
+                except SyncError as exc:
+                    failed = (name, exc.reason)
+        return failed
 
     async def _listing(self, key: str) -> dict[str, str]:
         """Dataset name -> ETag, every page."""

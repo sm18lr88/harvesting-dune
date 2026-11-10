@@ -215,3 +215,10 @@ def test_the_folder_defaults_to_datasets_next_to_the_database():
     assert entry.data_folder(args) == Path("/data/datasets")
     args = entry.parse_args(["--db", "/data/guild.sqlite", "--datasets", "/srv/sets", "--no-tls", "--host", "127.0.0.1"])
     assert entry.data_folder(args) == Path("/srv/sets")
+
+
+def test_three_or_more_query_parameters_with_an_unknown_name_are_404_like_one(box):
+    port, _, _, _, token = box
+    for query in ("access_token=x", "limit=5&after=a&access_token=x", "a=1&b=2&c=3"):
+        status, _, raw = get(port, "/v1/data?" + query, token)
+        assert (status, json.loads(raw)["status"]) == (404, 404), query

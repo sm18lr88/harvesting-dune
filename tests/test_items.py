@@ -6,12 +6,12 @@ import subprocess
 from importlib import resources
 
 import pytest
-from helpers import pose, session
+from helpers import ore, pose, session
 
 from harvesting_dune.app import Detector
 from harvesting_dune.catalog import GROUP_OF, RESOURCES
 from harvesting_dune.feed import BusMessage
-from harvesting_dune.itemsources import ItemSources
+from harvesting_dune.itemsources import CACHE_VERSION, ItemSources
 
 # shape of loot_crawl.js "materials": [map, x, y, z, source, chance, min, max]
 CRAWL = {
@@ -99,6 +99,26 @@ def test_emptied_container_is_no_longer_a_source(tmp_path):
     assert any(n.source == "live" and n.x == 200_000 for n in det.item_nodes(det.resource_key, 2))
     det.handle(BusMessage("delta", "dune.map.actors", {"worldId": "survival_1", "coriolisWorldSeed": 7, "actors": []}), 3)
     assert not any(n.x == 200_000 for n in det.item_nodes(det.resource_key, 3))
+
+
+def test_a_container_you_emptied_is_skipped_for_an_hour_then_a_source_again(tmp_path):
+    det = detector(tmp_path)
+    session(det, "survival_1")
+    det.ui("minimap_toggle", "item:t4mysatarilcomponent1")
+    pose(det, 199_000, 0, t=1)
+    cage = {"id": "u", "actorType": "BP_TemporaryLootContainer_UltraRareContainer_C", "markerType": "LootContainer",
+            "spriteKey": "lootcontainer", "x": 200_000, "y": 0, "z": 0}
+    far = ore("o1", 900_000, 0)
+
+    def listed(t, *acts):
+        det.handle(BusMessage("delta", "dune.map.actors", {"worldId": "survival_1", "coriolisWorldSeed": 7, "actors": list(acts)}), t)
+
+    listed(2, cage, far)
+    listed(3, far)  # it vanished alone next to you: you emptied it
+    listed(3 + 59 * 60, cage, far)  # the game lists it again, not saying whether it is full
+    assert not any(n.x == 200_000 for n in det.item_nodes(det.resource_key, 3 + 59 * 60))
+    listed(3 + 61 * 60, cage, far)
+    assert any(n.source == "live" and n.x == 200_000 for n in det.item_nodes(det.resource_key, 3 + 61 * 60))
 
 
 def test_an_item_target_survives_restarts_and_unknown_items_fall_back(tmp_path):
@@ -306,3 +326,119 @@ def test_consumables_are_never_targets_even_from_an_old_cache(tmp_path):
     det = Detector(None, data_dir=tmp_path)
     det.ui("resource", "item:water")
     assert det.resource_key != "item:water"
+
+
+def test_a_cache_with_the_wrong_shape_is_ignored_and_the_detector_starts(tmp_path):
+    for i, bad in enumerate([{"items": [], "byMap": {}}, {"items": {}, "byMap": {"deepdesert_1_00": []}}]):
+        folder = tmp_path / str(i)
+        folder.mkdir()
+        (folder / "item-sources.json").write_text(json.dumps({"version": CACHE_VERSION, "built": 1, **bad}))
+        assert Detector(None, data_dir=folder, min_rescore_s=0).items.items == {}
+
+
+def test_rows_without_a_position_are_skipped_in_a_crawl_and_in_an_old_cache(tmp_path):
+    good = ["deepdesert_1_00", 10_000, 10_000, 0, "Primitive Container", 0.8, 1, 8]
+    crawl = {"built": 1, "materials": [{"id": "dust", "name": "Diamondine Dust", "categories": ["items/misc", "items/misc/components"],
+                                       "drops": [good, ["deepdesert_1_03", None, 0, 0, "Primitive Container", 0.8, 1, 8]]}]}
+    src = ItemSources(tmp_path)
+    assert src.ingest(crawl) == 1
+    assert src.sources("item:dust", "deepdesert_1_00") == [tuple(good[1:])] and src.sources("item:dust", "deepdesert_1_03") == []
+    cache = json.loads((tmp_path / "item-sources.json").read_text())
+    cache["byMap"]["deepdesert_1_03"] = {"dust": [[None, 0, 0, "Rare Container", 0.5, 1, 1]]}  # written before rows were checked
+    (tmp_path / "item-sources.json").write_text(json.dumps(cache))
+    again = ItemSources(tmp_path)
+    assert again.sources("item:dust", "deepdesert_1_03") == []
+    assert again.layout_for(("deepdesert_1", 7), [(10_000, 10_000)]) == "deepdesert_1_00"
+    assert again.info("item:dust", "deepdesert_1_03")["sources"] == []
+
+
+def _run_crawl(cdn_items: dict, refuse: str = "") -> str:
+    """loot_crawl.js against a fake CDN; `refuse` ("entities" / "items") answers those fetches non-2xx."""
+    from harvesting_dune.loot import CRAWL_SCRIPT
+
+    code = r"""
+const enc = (v) => { const arr = []; const put = (x) => { const i = arr.length; arr.push(null);
+  arr[i] = Array.isArray(x) ? x.map(put) : x && typeof x === 'object' ? Object.fromEntries(Object.entries(x).map(([k, y]) => [k, put(y)])) : x; return i; };
+  put(v); return arr; };
+const ITEMS = DATA, REFUSE = WHICH;
+const ents = Object.keys(ITEMS).map((id) => ({ id, mainCategoryId: 'items', name: ITEMS[id].name }));
+globalThis.fetch = async (url) => { const p = new URL(url).pathname; const m = p.match(/\/items\/([^/]+)\.d\.json$/);
+  const body = p.endsWith('/entities.d.json') ? (REFUSE === 'entities' ? null : ents)
+    : m && ITEMS[m[1]] && REFUSE !== 'items' ? { id: m[1], ...ITEMS[m[1]] } : null;
+  return { ok: !!body, json: async () => enc(body) }; };
+eval(SCRIPT).then((s) => console.log(s), (e) => console.log('REJECTED ' + e.message));
+""".replace("DATA", json.dumps(cdn_items)).replace("WHICH", json.dumps(refuse)).replace("SCRIPT", json.dumps(CRAWL_SCRIPT))
+    out = subprocess.run(["node", "-"], input=code, capture_output=True, text=True, timeout=30, check=False)
+    assert out.returncode == 0, out.stderr
+    return out.stdout.splitlines()[0]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_a_crawl_the_cdn_refused_fails_instead_of_replacing_the_caches_with_nothing():
+    assert _run_crawl(CDN_ITEMS, refuse="entities").startswith("REJECTED")
+    assert _run_crawl(CDN_ITEMS, refuse="items").startswith("REJECTED")
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_an_empty_schematic_vendor_list_falls_back_to_the_items_own_vendors():
+    boots = {"boots": {"name": "Vendor Boots", "categories": ["items/garment"], "rarity": "Unique", "schematic": {"id": "s5", "soldBy": []},
+                       "schematicSoldBy": [], "soldBy": [{"entity": {"name": "Boot Vendor"}, "price": 900}]}}
+    [u] = json.loads(_run_crawl(boots))["uniques"]
+    assert u["via"] == "item" and u["sold"] == [["Boot Vendor", 900, None]]
+
+
+def _dust(*drops) -> dict:
+    return {"built": 1, "materials": [{"id": "dust", "name": "Diamondine Dust", "categories": ["items/misc/components"],
+                                       "drops": list(drops)}]}
+
+
+def test_a_tied_layout_guess_is_checked_again_when_a_later_container_decides_it(tmp_path):
+    shared = [["deepdesert_1_0" + w, 20_000 * i, 0, 0, "Primitive Container", 0.5, 1, 1] for w in "37" for i in (1, 2, 3)]
+    src = ItemSources(tmp_path)
+    src.ingest(_dust(*shared, ["deepdesert_1_07", 90_000, 90_000, 0, "Primitive Container", 0.5, 1, 1]))
+    seen = [(20_000, 0), (40_000, 0), (60_000, 0)]
+    src.layout_for(("deepdesert_1", 7), seen)  # both layouts fit these three
+    assert src.layout_for(("deepdesert_1", 7), [*seen, (90_000, 90_000)]) == "deepdesert_1_07"
+
+
+def test_one_container_listed_twice_for_an_item_counts_as_one_place(tmp_path):
+    src = ItemSources(tmp_path)
+    src.ingest(_dust(*[["deepdesert_1_07", 50_000, 50_000, 0, "Primitive Container", c, 1, 8] for c in (0.4, 0.8)],
+                     ["deepdesert_1_07", 0, 0, 0, "Fallen Shipwreck (PvE Area)", 0.9, 1, 8]))
+    [g] = src.picker("deepdesert_1_07")
+    assert g["items"][0][2] == 1
+    assert [s["count"] for s in src.info("item:dust", "deepdesert_1_07")["sources"] if s["where"] == "fixed"] == [1]
+    assert src.elsewhere("item:dust", "survival_1")[0]["places"] == 1
+
+
+def test_a_cached_item_without_a_name_is_dropped_and_the_settings_page_still_works(tmp_path):
+    detector(tmp_path)
+    cache = json.loads((tmp_path / "item-sources.json").read_text())
+    cache["items"]["noname"] = {"group": "Components", "sold": []}
+    (tmp_path / "item-sources.json").write_text(json.dumps(cache))
+    det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+    names = [r[1] for g in json.loads(json.dumps(det.snapshot()))["itemGroups"] for r in g["items"]]
+    assert names == ["Diamondine Dust"]
+
+
+def test_a_cached_vendor_row_of_the_wrong_shape_is_dropped_and_the_item_still_shows(tmp_path):
+    detector(tmp_path)
+    cache = json.loads((tmp_path / "item-sources.json").read_text())
+    cache["items"]["t4mysatarilcomponent1"]["sold"].append(["Vendor without a price"])
+    (tmp_path / "item-sources.json").write_text(json.dumps(cache))
+    det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+    det.ui("resource", "item:t4mysatarilcomponent1")
+    assert [v["name"] for v in det.snapshot()["itemInfo"]["vendors"]] == ["Zoe"]
+
+
+def test_a_source_without_a_height_is_skipped_and_the_rest_still_rank(tmp_path):
+    det = Detector(None, data_dir=tmp_path, min_rescore_s=0)
+    det.items.ingest(_dust(["survival_1", 100_000, 0, 0, "Primitive Container", 0.8, 1, 8],
+                           ["survival_1", 101_000, 0, None, "Primitive Container", 0.8, 1, 8]))  # the crawl's null z
+    session(det, "survival_1")
+    pose(det, 10, 0, t=1)
+    det.vehicles.set_override("ornithopter")
+    det.ui("minimap_toggle", "item:dust")
+    det.compute(2)
+    dest = det.page_state()["dest"]
+    assert dest is not None and round(dest["x"]) == 100_000

@@ -2,6 +2,7 @@
 Characters view, an unchanged profile is neither uploaded nor sent again, the switches delete or
 trim what is shared, and no currency ever reaches the server."""
 
+import asyncio
 import json
 import threading
 import time
@@ -14,7 +15,7 @@ from guildsync.httpd import make_server
 from guildsync.storage import Storage
 from helpers import pose
 from test_robustness import free_port
-from test_sync_integration import ALPHA, Player, Stop, issue
+from test_sync_integration import ALPHA, OTHER, Player, Stop, issue
 
 from harvesting_dune import profile, syncloop
 from harvesting_dune.app import Detector
@@ -140,7 +141,9 @@ def test_switches_trim_then_delete_and_no_currency_is_ever_sent(players, guild):
     assert paths(a) == ["/v1/profile"] * 3 and a.profile_calls[-1][1]["profile"] is None
     b.det.characters_opened()
     b.sync_once()
-    assert b.det.character_detail(1001) is None
+    # a guildmate who shares nothing still gets a details pane: "Not shared.", never "Pick a character."
+    assert b.det.character_detail(1001) == {"id": 1001, "name": "Paul Test", "self": False, "ageS": None,
+                                            "profile": None, "recipeNames": {}}
     assert [r["profileAgeS"] for r in b.det.characters_snapshot()["rows"] if r["id"] == 1001] == [None]
 
     wire = b"".join(raw for _, raw in bodies)
@@ -178,3 +181,48 @@ def test_a_guildmates_profile_is_reduced_to_known_shapes_before_the_page_sees_it
                    "landsraad": {"term": None, "houses": [{"house": "house_hagal", "specialization": None, "progress": None,
                                                           "max": None, "earned": 0, "rewards": 0}]},
                    "achievements": {"completed": [], "progress": [], "seen": 0}, "session": None}
+
+
+def test_a_character_on_another_battlegroup_gets_that_battlegroups_profiles(tmp_path, players, guild, capsys):
+    a, b = players
+    url, db, _ = guild
+    t0 = time.time()
+    feyd = Player(tmp_path / "c", url, issue(capsys, db, "Feyd")["token"],
+                  {"characterName": "Feyd Test", "characterId": 1003, "battlegroupId": OTHER}, t0)
+    pose(feyd.det, 0, 0, t=t0 + 1)
+    feyd.sync_once()  # Feyd's profile goes up first: the lowest profile rev
+    a.sync_once()
+    b.det.characters_opened()
+    b.sync_once()  # as Chani on ALPHA: the cursor moves past Feyd's rev
+    b.det.handle(BusMessage("delta", "dune.trackedSession",
+                            {"characterName": "Chani Alt", "characterId": 1004, "battlegroupId": OTHER}), t0 + 3)
+    b.det.characters_opened()
+    with pytest.raises(Stop):  # this pass also carries Chani's goodbye
+        asyncio.run(b.runner.sync_loop())
+    assert [r["profileAgeS"] is not None for r in b.det.characters_snapshot()["rows"] if r["id"] == 1003] == [True]
+
+
+def test_the_still_open_ping_fetches_profiles_without_a_sync(players, monkeypatch):
+    a, b = players
+    a.sync_once()
+    b.det.ui("guild_view", "characters")
+    b.sync_once()
+    naps: list[float] = []
+
+    async def a_minute_later(seconds, wake):
+        if naps:
+            raise Stop
+        naps.append(seconds)
+        b.det.chars.open_at -= 60
+        b.det.chars.fetched_at -= 61
+        b.det.ui("guild_view", "characters")  # the open view's once-a-minute "still open"
+        await asyncio.sleep(0)  # let the loop run the wake-up the ping scheduled
+        woken = wake.is_set()
+        wake.clear()
+        return seconds, woken
+
+    monkeypatch.setattr(syncloop, "nap", a_minute_later)
+    syncs, fetches = len(b.calls), paths(b).count("/v1/profiles")
+    with pytest.raises(Stop):
+        asyncio.run(b.runner.sync_loop())
+    assert (len(b.calls) - syncs, paths(b).count("/v1/profiles") - fetches) == (1, 1)

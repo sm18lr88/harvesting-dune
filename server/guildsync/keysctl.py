@@ -58,6 +58,11 @@ def _when(ts: float | None) -> str:
     return time.strftime("%Y-%m-%d %H:%M", time.gmtime(ts)) if ts is not None else "-"
 
 
+def _shown(cell: str) -> str:
+    """Character names come from players' requests: a control code must not rewrite the admin's terminal."""
+    return "".join(ch if ch.isprintable() else "?" for ch in cell)
+
+
 def _list(storage: Storage, args: argparse.Namespace, now: float) -> int:
     keys = [
         {"keyId": k["id"], "label": k["label"], "note": k["note"], "role": k["role"], "state": k["state"],
@@ -71,8 +76,8 @@ def _list(storage: Storage, args: argparse.Namespace, now: float) -> int:
         print(summary, file=sys.stderr)
         return OK
     rows = [("keyId", "label", "role", "state", "created", "revoked", "lastSeen", "characters")]
-    rows += [(k["keyId"], k["label"], k["role"], k["state"], _when(k["created"]), _when(k["revoked"]), _when(k["lastSeen"]),
-              ", ".join(k["characters"]) or "-") for k in keys]
+    rows += [tuple(map(_shown, (k["keyId"], k["label"], k["role"], k["state"], _when(k["created"]), _when(k["revoked"]),
+                                _when(k["lastSeen"]), ", ".join(k["characters"]) or "-"))) for k in keys]
     widths = [max(len(r[n]) for r in rows) for n in range(7)]
     for r in rows:
         print("  ".join(cell.ljust(w) for cell, w in zip(r, widths, strict=False)) + "  " + r[7])

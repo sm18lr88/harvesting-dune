@@ -2,7 +2,9 @@
 """User actions and the minimap filter (a mixin of app.Detector; it shares the detector's state).
 
 Rule: with lines on, the minimap shows exactly the searched resource (ticking another one
-switches the search). Every accepted action is saved through settings.save.
+switches the search). Every accepted settings-page choice is saved through settings.save; the
+vehicle override and the on/off switch last only for this run, blocked cells are saved with the
+terrain, and pins are memory-only.
 """
 
 from __future__ import annotations
@@ -69,7 +71,6 @@ class ControlsMixin:
             return  # a downed-ship search keeps its own view
         if self.lines_enabled and len(visible) == 1 and self.family(self.resource_key) != visible[0]:
             self.resource_key = visible[0]
-            self.areas = []
 
     def _show_only(self, key: str) -> None:
         """Lines need exactly one resource: the minimap shows only the searched resource's family."""
@@ -86,55 +87,47 @@ class ControlsMixin:
                 "linesActive": self.lines_active, "visibleCount": len(self.visible_resources())}
 
     # -- actions ---------------------------------------------------------------------------------
-    def ui(self, action: str, value: str | None = None) -> None:
+    def ui(self, action: str, value: str | None = None) -> bool:
+        """False when the action is unknown or refused its value: the settings page must say so."""
         if action == "minimap_extra" and value in EXTRA_BY_KEY:
             self.minimap_extras ^= {value}  # minimap only: the search and lines are unaffected
             settings.save(self)
             self.minimap_rev += 1
             self.publish_rev += 1
-            return
+            return True
         if action in ("minimap_toggle", "lines"):
-            self._minimap_action(action, value)
-            return
+            return self._minimap_action(action, value)
         if action.startswith("route_"):  # farm route mode (farm.py): never touches the ranking
-            self.farm_action(action, value)
-            return
+            return self.farm_action(action, value) is not False  # None: farm.py does not report a refusal yet
         if action in ("sync_pause", "sync_positions", "sync_member", "share_character", "share_session"):
-            self._sync_action(action, value)
-            return
+            return self._sync_action(action, value)
         if action in ("object_pin", "object_delete", "pin_label"):
-            self._object_action(action, value)
-            return
+            return self._object_action(action, value)
         if action == "guild_view":  # the settings page opened a guild list: fresh data now
             if value == "characters":
                 self.characters_opened()
             else:
                 self.sync_wake()
-            return
+            return True
         if not self._setting_action(action, value):
-            return
-        self.areas = []  # never show a recommendation computed for the previous choice
-        self.hotspot = None
-        self._known_nodes = 0
-        self._scored_at = 0.0
-        self._changed()
+            return False
+        self._restart_ranking()  # never show a recommendation computed for the previous choice
+        return True
 
-    def _minimap_action(self, action: str, value: str | None) -> None:
+    def _minimap_action(self, action: str, value: str | None) -> bool:
+        searched = self.resource_key
         if action == "minimap_toggle":
             if not self._known_resource(value):
-                return
+                return False
             if self.items.is_item(value):
                 # a looted material has no companion markers: selecting it means lines to its sources,
                 # so the map resources step aside (the same exclusive view as with lines on)
-                if self.resource_key != value:
-                    self.resource_key = value
-                    self.areas = []
+                self.resource_key = value
                 self._show_only(value)
             elif self.lines_enabled:
                 # one resource at a time: ticking one selects it (a spice size mode is kept)
                 if self.family(self.resource_key) != value:
                     self.resource_key = value
-                    self.areas = []
                 self._show_only(value)
             else:
                 self.minimap_hidden ^= {value}
@@ -142,14 +135,14 @@ class ControlsMixin:
             self.minimap_rev += 1
         else:  # lines
             self.lines_enabled = not self.lines_enabled
-            if self.lines_enabled and len(self.visible_resources()) != 1:
+            if self.lines_enabled and not self.lines_active:  # an item or downed-ship search needs 0 shown
                 self._show_only(self.resource_key)
             self._follow_single_visible()
         settings.save(self)
-        self._scored_at = 0.0
-        self._changed()
+        self._restart_ranking(clear=self.resource_key != searched)  # another search: nothing of the old one stays
+        return True
 
-    def _sync_action(self, action: str, value: str | None) -> None:
+    def _sync_action(self, action: str, value: str | None) -> bool:
         """Guild sync switches; they never touch the ranking. The key has its own endpoint."""
         match action:
             case "sync_pause":
@@ -167,25 +160,28 @@ class ControlsMixin:
             case "share_session":
                 self.share_session = not self.share_session
                 self.sharing_changed()
-            case _ if value is not None and value.isascii() and value.isdigit():  # sync_member: one guildmate on my minimap
+            # sync_member: one guildmate on my minimap; int() raises past 4300 digits
+            case _ if value is not None and value.isascii() and value.isdigit() and len(value) <= 18:
                 self.sync_hidden_members ^= {int(value)}
             case _:
-                return
+                return False
         settings.save(self)
+        return True
 
-    def _object_action(self, action: str, value: str | None) -> None:
+    def _object_action(self, action: str, value: str | None) -> bool:
         """Pins: one publish path for the hotkey and the settings page; never touches the ranking."""
         text = (value or "").strip()[:LABEL_MAX]
         match action:
             case "object_pin":
                 label = text or self.pin_label
-                if label:
-                    self.publish_object("pin", {"label": label})
+                return bool(label) and self.publish_object("pin", {"label": label}) is not None
             case "object_delete":
-                self.delete_object(value or "")
+                return self.delete_object(value or "")
             case _ if text:  # pin_label
                 self.pin_label = text
                 settings.save(self)
+                return True
+        return False
 
     def _setting_action(self, action: str, value: str | None) -> bool:
         """Apply one action; False if it was not recognised or its value was invalid."""
@@ -210,8 +206,7 @@ class ControlsMixin:
             self.resource_key = value
             self._resource_chosen()
         elif action in ("next_resource", "prev_resource"):
-            i = (keys.index(self.resource_key) if self.resource_key in keys else -1) + (1 if action == "next_resource" else -1)
-            self.resource_key = keys[i % len(keys)]
+            self.resource_key = self._cycled_resource(keys, action == "next_resource")
             self._resource_chosen()
         elif action == "vehicle" and value in VEHICLE_CHOICES:
             self.vehicles.set_override(None if value == "auto" else value)
@@ -233,6 +228,12 @@ class ControlsMixin:
             return False
         settings.save(self)
         return True
+
+    def _cycled_resource(self, keys: list[str], forward: bool) -> str:
+        """A search outside the list (a material) re-enters it at the end it steps towards."""
+        if self.resource_key not in keys:
+            return keys[0] if forward else keys[-1]
+        return keys[(keys.index(self.resource_key) + (1 if forward else -1)) % len(keys)]
 
     def _resource_chosen(self) -> None:
         if self.lines_enabled:

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import time
 from pathlib import Path
@@ -41,14 +42,46 @@ def write_json(path: Path, data: Any, **dump_kw: Any) -> None:
         tmp.unlink(missing_ok=True)
 
 
-def read_json(path: Path | None, expect: type | tuple[type, ...], default: Any = None) -> Any:
-    """`path` parsed as JSON if it exists and has the expected top-level type, else `default`."""
+def _refuse_constant(name: str) -> float:
+    raise ValueError(f"{name} is not a number a loader can use")
+
+
+def _finite_float(text: str) -> float:
+    f = float(text)
+    if not math.isfinite(f):
+        raise ValueError(f"{text} is out of range")
+    return f
+
+
+def _bounded_int(text: str) -> int:
+    i = int(text)
+    try:
+        float(i)  # loaders turn numbers into floats; ids up to 2**63 stay far below this
+    except OverflowError:
+        raise ValueError(f"an integer of {len(text)} digits is out of range") from None
+    return i
+
+
+def parse_json(text: str) -> Any:
+    """json.loads without the values that write_json never emits (NaN, Infinity, numbers
+    beyond a float): loaders call float() on them, and a hand-edited file with one such
+    value must be refused like a cut-off one, not stop the start or break a world."""
+    return json.loads(text, parse_constant=_refuse_constant, parse_float=_finite_float, parse_int=_bounded_int)
+
+
+def read_json(path: Path | None, expect: type | tuple[type, ...], default: Any = None, *, per_value: bool = False) -> Any:
+    """`path` parsed as JSON if it exists and has the expected top-level type, else `default`.
+
+    per_value=True is for a loader that checks every value itself and skips only the bad one
+    (terrain cells): a number beyond a float then reaches that check instead of costing the
+    whole file. NaN and Infinity are refused either way."""
     if path is None or not path.exists():
         return default
     try:
-        data = json.loads(path.read_text("utf8"))
-    except (OSError, ValueError):
-        log.warning("ignoring unreadable %s", path)
+        text = path.read_text("utf8")
+        data = json.loads(text, parse_constant=_refuse_constant) if per_value else parse_json(text)
+    except (OSError, ValueError) as exc:
+        log.warning("ignoring unreadable %s: %s", path, exc)
         return default
     if not isinstance(data, expect):
         log.warning("ignoring %s: unexpected content", path)

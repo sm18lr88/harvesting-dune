@@ -11,9 +11,10 @@ import time
 from urllib.parse import urlsplit
 
 from . import hotkeys, logsetup
-from .app import Detector
+from .app import SCAN_REFRESH_MIN_S, Detector
 from .feed import CompanionHub, Page, to_bus
 from .governor import Governor
+from .learning import map_samples
 from .zones import fit_grid
 
 log = logging.getLogger(__name__)
@@ -33,9 +34,12 @@ class Runner:
         self.hub = hub
         self.exit_when_gone_s = exit_when_gone_s  # 0: keep waiting for the companion forever
         self._pushed_rev = -1
+        self._pushed_texts: tuple | None = None  # badge and picker as last pushed: they also change with time
         self._sent: dict[str, dict[str, str]] = {}  # page id -> slot -> the expression that page last got
         self.pushed: dict[str, list[int]] = {}  # page url -> [calls, bytes] sent by push, for diagnosis
-        self._minimap_rev = -1
+        self._minimap_rev: tuple[int, bool] | int = -1  # (filter revision, gate open) last written
+        self._scan_owed: set[str] = set()  # pages whose scan layer may still show rows confirmed stale
+        self._scan_tried_at = -1e18  # a scan-layer reload no page could carry out: try again later
         self._scan_key: tuple | None = None
         self._scan_failures = 0
         self._problems = 0
@@ -79,21 +83,55 @@ class Runner:
             self._minimap_rev = -1  # (re)attached minimap: make sure its filter matches
         self._sent.pop(page.id, None)
         await self._send(page, self._expressions())
+        if self.det.scan.refreshed & set(self.det.scan.stale):
+            # it fetched its scan rows before our stale list arrived: rows reloaded away earlier are back
+            self._scan_owed.add(page.id)
+        await self._reload_owed_scan(page)
+
+    async def _reload_owed_scan(self, page: Page) -> bool:
+        """Make the page refetch its scan layer through our filter; it stays owed until it answers 'ok'
+        ('no-session': it has not had its session yet)."""
+        if page.id not in self._scan_owed or not self.det.gate_open():
+            return False
+        try:
+            done = await page.evaluate(_js_call("refreshScan")) == "ok"
+        except Exception as exc:  # noqa: BLE001 - a reloading page is routine, not a problem
+            logsetup.limited(log, f"rescan:{page.url}", "scan-layer reload in %s failed: %r", page.url, exc)
+            return False
+        if done:
+            self._scan_owed.discard(page.id)
+        return done
+
+    async def _refresh_scan_layers(self, now: float) -> None:
+        """Booked only once a page has really reloaded: pages that could not stay owed until a later ping."""
+        await self._push_all()  # stale list first
+        pages = [p for p in self.hub.pages.values() if not p.closed.is_set()]
+        self._scan_owed.update(p.id for p in pages)
+        done = [await self._reload_owed_scan(p) for p in pages]
+        if not any(done):
+            self._scan_tried_at = now
+            return
+        self.det.scan_refreshed(now)
+        log.info("companion scan layer reloaded without %s confirmed-stale entries", len(self.det.scan.stale))
 
     async def _push_all(self) -> None:
         exprs = self._expressions()
         for pid in [pid for pid in self._sent if pid not in self.hub.pages]:
             del self._sent[pid]
+        self._scan_owed &= set(self.hub.pages)
         for page in list(self.hub.pages.values()):
             if not page.closed.is_set():
                 await self._send(page, exprs)
 
     async def apply_minimap_filter(self) -> None:
         """Write the minimap's own filter list (the minimap page reloads to apply it)."""
-        if self.det.minimap_rev == self._minimap_rev or not self.det.gate_open():
+        applied = (self.det.minimap_rev, self.det.gate_open())
+        if applied == self._minimap_rev:
             return
-        self._minimap_rev = self.det.minimap_rev
+        self._minimap_rev = applied
         hidden, managed = self.det.minimap_filter()
+        if not applied[1]:
+            hidden = []  # gate.py: the companion has no control for this list, so give back every type we hid
         for page in list(self.hub.pages.values()):
             if page.is_minimap and not page.closed.is_set():
                 try:
@@ -102,13 +140,20 @@ class Runner:
                 except Exception as exc:  # noqa: BLE001 - one failure must not stop the detector
                     log.warning("minimap filter not applied: %s", exc)
 
+    def _texts(self) -> tuple | None:
+        """What the badge and the picker say: distances and alerts change without a new publish_rev."""
+        return (self.det.badge(), self.det.picker()) if self.det.gate_open() else None
+
     async def push(self) -> None:
         await self.apply_minimap_filter()
-        if self.det.publish_rev == self._pushed_rev:
+        texts = self._texts()
+        if self.det.publish_rev == self._pushed_rev and texts == self._pushed_texts:
             return
-        self._pushed_rev = self.det.publish_rev
-        await self._push_all()
-        self.det.publish_viewer()
+        published = self.det.publish_rev != self._pushed_rev
+        self._pushed_rev, self._pushed_texts = self.det.publish_rev, texts
+        await self._push_all()  # _send skips what a page already has
+        if published:
+            self.det.publish_viewer()
 
     async def consume(self) -> None:
         async for page, m in self.hub.messages():
@@ -151,25 +196,32 @@ class Runner:
                 if self.det.listeners and now - last_view > 2:
                     last_view = now  # control page: distances to cages etc. change as you move
                     self.det.publish_viewer()
-                if self.det.scan_refresh_due(now):
-                    await self._push_all()  # stale list first
-                    await self.hub.broadcast(_js_call("refreshScan"))
-                    self.det.scan_refreshed(now)
-                    log.info("companion scan layer reloaded without %s confirmed-stale entries", len(self.det.scan.stale))
+                # closed gate: the stale list is empty, so a reload now would use up the pending one
+                if (self.det.gate_open() and self.det.scan_refresh_due(now)
+                        and now - self._scan_tried_at >= SCAN_REFRESH_MIN_S):
+                    await self._refresh_scan_layers(now)
                 if now - last_grid > 60:
                     last_grid = now
                     await self.fit_grid()
                     await self.load_shipwrecks()
                 if time.time() - last_ping > 5:
                     last_ping = time.time()
-                    for page in list(self.hub.pages.values()):
-                        if page.closed.is_set():
-                            continue
-                        # a page that lost its state (reload / dead-man clear) gets it again
-                        if await page.evaluate("window.__dd ? window.__dd.ping() : 'none'") != "ok":
-                            await self._push_page(page)
+                    await self._ping_pages()
             except Exception:
                 log.exception("tick failed")
+
+    async def _ping_pages(self) -> None:
+        """A page that lost its state (reload / dead-man clear) gets it again."""
+        for page in list(self.hub.pages.values()):
+            if page.closed.is_set():
+                continue
+            try:
+                if await page.evaluate("window.__dd ? window.__dd.ping() : 'none'") != "ok":
+                    await self._push_page(page)
+                else:
+                    await self._reload_owed_scan(page)
+            except Exception as exc:  # noqa: BLE001 - a reloading page is routine, not a problem
+                logsetup.limited(log, f"ping:{page.url}", "ping to %s failed: %r", page.url, exc)
 
     async def fit_grid(self) -> None:
         """Fit this map's grid from the companion's own markers (once per run and map)."""
@@ -180,10 +232,7 @@ class Runner:
             if page.closed.is_set():
                 continue
             try:
-                samples = await page.evaluate("window.__dd && __dd.gridSamples ? __dd.gridSamples(5000) : []")
-                if not samples:  # no labelled markers drawn here: read the map data file instead
-                    samples = await page.evaluate(
-                        "window.__dd && __dd.gridSamplesFromData ? __dd.gridSamplesFromData(5000) : []", await_promise=True)
+                samples = await self._grid_samples(page, world_id)
             except Exception as exc:  # noqa: BLE001 - one failure must not stop the detector
                 logsetup.limited(log, f"grid:{page.url}", "grid samples from %s failed: %r", page.url, exc)
                 continue
@@ -191,6 +240,17 @@ class Runner:
                 fit = await asyncio.to_thread(fit_grid, samples)  # about a second for a full map
                 if self.det.on_grid_samples(world_id, samples, fit):
                     return
+
+    async def _grid_samples(self, page: Page, world_id: str) -> list | None:
+        """This world's markers in one page: the ones drawn, else its map data file. Only samples
+        labelled with this world's map count (an older bridge sends none: it is reloaded as outdated)."""
+        samples = map_samples(await page.evaluate(
+            "window.__dd && __dd.gridSamples ? __dd.gridSamples(5000, true) : null"), world_id)
+        if not samples:
+            samples = map_samples(await page.evaluate(
+                "window.__dd && __dd.gridSamplesFromData ? __dd.gridSamplesFromData(5000, true) : null",
+                await_promise=True), world_id)
+        return samples
 
     async def load_shipwrecks(self) -> None:
         """The named shipwrecks of this map, from the companion's own map data (once per map and cycle)."""
@@ -220,6 +280,8 @@ class Runner:
             self._scan_key = req
             try:
                 status, rows = await self.hub.fetch_scan(*req)
+                if self.det.scan_request() != req:
+                    continue  # the world changed while the page downloaded: these rows belong to the old one
                 if status != 200:
                     raise RuntimeError(f"HTTP {status}")
             except Exception as exc:  # noqa: BLE001 - one failure must not stop the detector
@@ -238,7 +300,9 @@ class Runner:
 
         while True:
             await asyncio.sleep(5)
-            if (not self.det.loot.stale and self.det.items.items) or self.hub.primary is None:
+            # items.built, not items.items: a crawl that found no material is still a finished crawl;
+            # it stays None only while item-sources.json is missing or from another version
+            if (not self.det.loot.stale and self.det.items.built is not None) or self.hub.primary is None:
                 await asyncio.sleep(55)
                 continue
             try:
@@ -342,3 +406,4 @@ class Runner:
             self.det.scan.stale.clear()
             await self.hub.broadcast(_js_call("set", {}))
             await self.hub.broadcast(_js_call("renderBadge", None))
+            await self.hub.broadcast(_js_call("hidePicker"))

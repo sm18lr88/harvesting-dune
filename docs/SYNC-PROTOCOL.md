@@ -163,7 +163,7 @@ The server keeps one row per key:
 
 So each row covers one 20 m cell. A new record for the same key updates the row (an upsert):
 
-- The newest observation wins. The server replaces the fields only when the new `observedAt` is the same or later.
+- The newest observation wins. The server replaces the fields only when the new observation is the same age or newer on the server clock (`receivedAt - lag`).
 - `observers` is the set of distinct key ids that reported the row. Every report adds its key id.
 - `receivedAt` is the server time of the upsert.
 - `lag = clamp(sentAt - observedAt, 0, 3600)`. Both times come from the same client clock, so clock skew cancels out.
@@ -277,7 +277,7 @@ The server counts live objects inside the same transaction as the write. A new l
 
 Replacing one of your live objects, or deleting one, always passes.
 
-The client checks the caps itself before it stages an object. When the server refuses an upload anyway, the client drops its staged objects and shows why on the settings page. Then it syncs again at once without them.
+The client checks the caps itself before it stages an object. When the server refuses an upload anyway, the client drops the objects of the refused request and shows why on the settings page. After an `#object-cap` refusal it keeps its staged deletes, because a delete always passes. Then it syncs again at once.
 
 ### Cursor
 
@@ -322,13 +322,14 @@ Every answer with a status of 400 or more is a problem details object (RFC 9457)
 
 | Status | `type` | When | Extra members |
 |---|---|---|---|
-| 400 | `#invalid-field` | The body is not JSON, nests too deep, its gzip does not inflate, or a field has the wrong shape or value. Also a bad `limit` or `after` on `GET /v1/data`. | `field`: the first bad field, for example `records[0].cls`, or `body` |
+| 400 | `#invalid-field` | The body is not JSON, nests too deep, its gzip does not inflate, or a field has the wrong shape or value. Also a bad `limit` or `after` on `GET /v1/data`, and a profile past the per-key cap (see "Characters"). | `field`: the first bad field, for example `records[0].cls`, or `body` |
 | 400 | `#object-cap` | A new live object would pass a cap (see "Objects"). Nothing is written. | `field`: the upload, for example `objects[0]` |
 | 401 | `#invalid-key` | The key is unknown, revoked or missing. | Header `WWW-Authenticate` |
 | 401 | `#key-expired` | A regular key was not used for more than 30 days (see "Key expiry"). | Header `WWW-Authenticate` |
 | 403 | `#character-owned` | The character in `identity` belongs to another key (see "Who may do what"). Nothing is written. | |
 | 404 | `about:blank` | Any other path, a dataset name that is not served, or an unknown query parameter on `GET /v1/data`. | |
 | 405 | `about:blank` | Another method on a known path. | Header `Allow` |
+| 408 | `about:blank` | The body did not arrive within 10 s. | |
 | 413 | `about:blank` | The body is over 256 KB (262144 bytes), as sent or after inflating. The server checks the declared size before it reads, and stops inflating at the limit. | |
 | 415 | `about:blank` | `Content-Type` is not `application/json`, or `Content-Encoding` is not `gzip`. | Header `Accept-Encoding: gzip` for the second case |
 | 429 | `#rate-limited` | Too many requests. | Header `Retry-After`: the wait in whole seconds |
@@ -362,11 +363,11 @@ Every write is an upsert on a key, so sending the same request twice leaves the 
 
 - sightings: one row per 20 m cell (see "Key rule"). A repeat adds no row. Its key id is already in `observers`. The row gets a new `rev`, so a guildmate may receive it once more. That costs bytes but changes nothing on the map.
 - roster and presence: one row per character.
-- profiles: one row per character. The same profile again keeps its `rev`. Deleting twice is the same as deleting once.
+- profiles: one row per character. The same profile again from the same key keeps its `rev`. Deleting twice is the same as deleting once.
 
 So the routes take no `Idempotency-Key`: a retry can never make a second copy of anything, and no money or items move.
 
-The routes take no `If-Match` either. Only the owning key writes a character's rows, and sightings keep the newest observation (`observedAt`), whatever order the writes arrive in. The only possible "lost update" is between two detectors on the same key, and there the newer data should win.
+The routes take no `If-Match` either. Only the owning key writes a character's rows, and sightings keep the newest observation on the server clock (`receivedAt - lag`), whatever order the writes arrive in. The only possible "lost update" is between two detectors on the same key, and there the newer data should win.
 
 ## Changing the contract
 
@@ -432,7 +433,7 @@ Rate limits:
 - When the identity ends, the old character says goodbye, and everything built for it is dropped: its queued finds, records not yet acknowledged, its profile topics and its upload throttle. The next character uploads its own profile at once.
 - If the companion does not track the session, nothing is published, and the settings page says "turn on session tracking in the companion to share".
 - Peer data stays in memory. It is fetched again after a restart. It never goes into the journal or into any file under `data\`.
-- Peer data never changes the ranking. It is drawn as its own kind, with its own colour and its age.
+- Peer data changes the ranking only for spice. At each spice site, the newest report wins: your own companion, a guildmate (`spice` and `blow` = active, `stale` on a spice row = empty) or the scan database (no time, so it is always the oldest). A site that your own companion loads now is decided by your companion alone. All other peer data never changes the ranking. Peer data is drawn as its own kind, with its own colour and its age.
 - Map rings are drawn only for `spice`, `blow`, `ship`, `ore` and members. `mined` and `stale` show only in the list on the settings page.
 - Positions: each player can show or hide each guildmate on the minimap. The default is to show all.
 
@@ -470,7 +471,8 @@ Never in a profile: currencies (Solari), session history, base ids, anything fro
 - Every value is plain JSON: finite numbers, text up to 200 characters, lists up to 1000 items, at most 6 levels deep.
 - The stored profile is at most 32 KB (32768 bytes) as compact JSON.
 - `profile: null` deletes the stored profile. The next `/v1/profiles` no longer lists it.
-- The server keeps one profile per character id. The same profile again keeps its `rev`.
+- The server keeps one profile per character id. The same profile again from the same key keeps its `rev`.
+- One key stores at most 20 character profiles. Another new character gets 400 `#invalid-field` with `field` `identity.characterId`.
 
 `POST /v1/profiles` takes `{"identity": {...}, "since": <int>}` and answers:
 
@@ -479,7 +481,7 @@ Never in a profile: currencies (Solari), session history, base ids, anything fro
 | `now` | The server clock. |
 | `next` | The highest profile rev so far. Send it as `since` next time. |
 | `ids` | Every character id of the caller's battlegroup that has a profile. A cached profile not in this list was deleted. |
-| `profiles` | Profiles of the caller's battlegroup with `rev > since`: `characterId`, `characterName`, `rev`, `ageS` (since the last change), `profile`, `playerTag` (see "Who may do what"). |
+| `profiles` | Profiles of the caller's battlegroup with `rev > since`: `characterId`, `characterName`, `rev`, `ageS` (since the last change of that profile; an upload with no change keeps its `rev` and its age), `profile`, `playerTag` (see "Who may do what"). |
 
 Profiles have their own rev counter. The sync response never holds profiles.
 

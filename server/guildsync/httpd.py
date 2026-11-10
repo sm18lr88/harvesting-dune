@@ -4,6 +4,7 @@ Wire contract: docs/SYNC-PROTOCOL.md. The handler owns transport rules only; `ap
 body's meaning and `storage` owns keys and the queryable audit table.
 """
 
+import contextlib
 import gzip
 import http.server
 import json
@@ -14,17 +15,17 @@ import ssl
 import sys
 import time
 import zlib
+from http import HTTPStatus
 
 from . import datasets
 from .buckets import Buckets
-from .problems import BAD_KEY, EXPIRED_KEY, MEDIA_TYPE, invalid, problem
+from .problems import BAD_KEY, CHALLENGE, EXPIRED_KEY, MEDIA_TYPE, invalid, problem
 
 MAX_BODY = 262144  # bytes, after any gzip is undone
 GZIP_OVER = 1024  # a reply body bigger than this goes out gzipped when the client asks for it
 ROUTES = {"/v1/sync": "sync", "/v1/profile": "profile", "/v1/profiles": "profiles"}  # path -> Api method
 HEALTH, HEALTH_METHODS = "/health", "GET, HEAD"
 DATA, DATA_METHODS = "/v1/data", "GET, HEAD"  # DATA alone lists; DATA + "/<name>" serves one dataset
-CHALLENGE = {"WWW-Authenticate": 'Bearer realm="guildsync"'}
 KEY_RATE = (30, 30 / 60)  # (bucket size, tokens per second): 30 requests a minute per key
 IP_RATE = (10, 10 / 60)  # per IP without a valid key, and /health
 HANDSHAKE_TIMEOUT_S = 10.0
@@ -78,7 +79,17 @@ def _gunzip(raw: bytes) -> bytes:
 
 
 def _wants_gzip(accept: str | None) -> bool:
-    return "gzip" in (part.split(";")[0].strip().lower() for part in (accept or "").split(","))
+    """RFC 9110: `gzip;q=0` means gzip is not acceptable."""
+    for part in (accept or "").split(","):
+        coding, *params = part.split(";")
+        if coding.strip().lower() != "gzip":
+            continue
+        q = next((p.split("=", 1)[1] for p in params if p.strip().lower().startswith("q=")), "1")
+        try:
+            return float(q) > 0
+        except ValueError:
+            return False
+    return False
 
 
 def _is_data(target: str) -> bool:
@@ -140,9 +151,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
         route = ROUTES.get(self.path)
         if route is None:
             return self._refuse_method()
-        raw = self._read_body()
         srv, ip, now = self.server, self.client_address[0], self.server.now()
-        key = self._caller(ip, now)
+        try:  # before the body: a caller without a valid key spends the IP bucket, whatever it sent
+            key = self._caller(ip, now)
+        except Rejected:
+            self._discard_body()
+            raise
+        raw = self._read_body()
         if self.headers.get_content_type() != "application/json":
             raise Rejected(415, problem(415, detail="Send the body as application/json."))
         try:
@@ -156,11 +171,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return getattr(srv.api, route)(key, body, ip, now)
 
     def _data(self) -> tuple:
-        self._caller(self.client_address[0], self.server.now())
+        ip, now = self.client_address[0], self.server.now()
+        key = self._caller(ip, now)
         gzip_over = GZIP_OVER if _wants_gzip(self.headers.get("Accept-Encoding")) else None
         path, mark, query = self.path.partition("?")
-        return datasets.reply(self.server.datasets, path[len(DATA):], query if mark else None,
-                              self.headers.get("If-None-Match"), gzip_over)
+        reply = datasets.reply(self.server.datasets, path[len(DATA):], query if mark else None,
+                               self.headers.get("If-None-Match"), gzip_over)
+        if reply[0] < 400:  # an accepted request (a 304 too) is key use
+            self.server.storage.touch_key(key["id"], now, ip)
+        return reply
 
     def _caller(self, ip: str, now: float) -> dict:
         """The caller's active key, recorded for the audit, after its rate bucket allowed the request."""
@@ -180,9 +199,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         retry = self.server.ip_buckets.take(ip, now)
         raise _limited(retry) if retry else Rejected(401, BAD_KEY if key is None else EXPIRED_KEY, CHALLENGE)
 
-    def _read_body(self) -> bytes:
-        """The whole body, refused by its declared size before a byte of it is read; a gzip body is
-        inflated (Content-Encoding: gzip), any other encoding is refused."""
+    def _read_raw(self) -> bytes:
+        """The body as sent, refused by its declared size before a byte of it is read. All of it must
+        arrive within `timeout` seconds: the socket timeout alone bounds each read, not the body."""
         try:
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
@@ -191,7 +210,36 @@ class Handler(http.server.BaseHTTPRequestHandler):
             raise Rejected(400, invalid("body", "Content-Length is not a size."))
         if length > MAX_BODY:
             raise _too_large()
-        raw = self.rfile.read(length)
+        deadline, parts, got = time.monotonic() + self.timeout, [], 0
+        try:
+            while got < length:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    raise TimeoutError
+                self.connection.settimeout(left)
+                part = self.rfile.read1(length - got)
+                if not part:
+                    raise ConnectionError
+                parts.append(part)
+                got += len(part)
+        except OSError:  # the client stalled, trickled or dropped mid-body: its fault, not a server error
+            self.close_connection = True
+            raise Rejected(408, problem(408)) from None
+        finally:
+            self.connection.settimeout(self.timeout)  # the reply gets the whole timeout, not what the body left
+        return b"".join(parts)
+
+    def _discard_body(self) -> None:
+        """Read a refused caller's body without inflating or parsing it: closing on unread bytes
+        would reset the connection before the client reads its 401."""
+        self.close_connection = True
+        with contextlib.suppress(Rejected):
+            self._read_raw()
+
+    def _read_body(self) -> bytes:
+        """The whole body (`_read_raw`); a gzip body is inflated (Content-Encoding: gzip), any other
+        encoding is refused."""
+        raw = self._read_raw()
         match (self.headers.get("Content-Encoding") or "identity").strip().lower():
             case "identity":
                 return raw
@@ -259,8 +307,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def send_error(self, code: int, message: str | None = None, explain: str | None = None) -> None:
         """Parse failures in the base class (bad request line, header limits, unknown method) answer
-        with problem details too."""
-        self.log_message("refused %d: %s", code, (message or "")[:200])
+        with problem details too. An unknown method (501 in the base class) gets the 405 or 404 of
+        every other method: its request line and headers are parsed by then."""
+        if code == HTTPStatus.NOT_IMPLEMENTED:
+            self._serve(self._refuse_method)
+            return
+        self.log_message("refused %d: %s", code, HTTPStatus(code).phrase)  # the base class's text may quote the request line, key and all
         self.close_connection = True
         self._reply(code, problem(code), {})
 

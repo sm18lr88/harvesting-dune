@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 
 from .catalog import SPICE_SIZE, Resource
 from .model import Pose
-from .terrain import TerrainGrid, VehicleProfile, cell_center
+from .terrain import CELL_CM, TerrainGrid, VehicleProfile, cell_center
 
 AREA_RADIUS_CM = 25000.0  # 250 m
 PARK_RADIUS_CM = 15000.0  # walk at most 150 m from the vehicle
@@ -43,7 +43,7 @@ SPICE_RADIUS_CM = {"small": 3000.0, "medium": 6000.0, "large": 10000.0}
 MAX_REPORTED = 30
 ROUTE_BATCH = 6
 PLAN_RANGE_CM = 800000.0  # 8 km: matches the route search window
-LIKELIHOOD = {"live": 1.0, "memory": 0.8, "scan": 0.6, "scan_spice": 0.3}
+LIKELIHOOD = {"live": 1.0, "memory": 0.8, "guild": 0.8, "scan": 0.6, "scan_spice": 0.3}
 SESSION_S = 30 * 60.0  # a mining session: how much can you collect in this time, trip included?
 PATCH_CM = 80000.0  # neighbouring areas within 800 m belong to the same patch
 PATCH_NEIGHBOUR_WEIGHT = 0.8  # a little less certain than the spot you land on
@@ -56,14 +56,14 @@ class Node:
     x: float
     y: float
     z: float
-    source: str  # live | memory (seen earlier, now out of load range) | scan
+    source: str  # live | memory (seen earlier, now out of load range) | guild (a guildmate saw it active) | scan
     fill: float | None = None  # 0..1 for spice
     row_key: str | None = None  # scan-database identity, for corrections
     weight: float | None = None  # expected amount from this node (looted materials: chance x avg qty)
 
     @property
     def likelihood(self) -> float:
-        if self.source in ("live", "memory"):
+        if self.source in ("live", "memory", "guild"):
             return LIKELIHOOD[self.source]
         return LIKELIHOOD["scan_spice"] if self.marker in SPICE_SIZE else LIKELIHOOD["scan"]
 
@@ -129,7 +129,9 @@ def _clusters(nodes: list[Node]) -> list[Area]:
                 members.extend(buckets[b])
                 taken.add(b)
         ws = [m.value() * m.likelihood for m in members]
-        w = sum(ws) or 1.0
+        if not sum(ws):  # nothing of value here (an empty field): weigh the members equally, not at (0, 0)
+            ws = [1.0] * len(members)
+        w = sum(ws)
         cx = sum(m.x * wi for m, wi in zip(members, ws, strict=True)) / w
         cy = sum(m.y * wi for m, wi in zip(members, ws, strict=True)) / w
         areas.append(Area(cx, cy, min(m.z for m in members), members))
@@ -149,11 +151,16 @@ def recommend(
     yield_at: Callable[[float, float], float] | None = None,
     need: int | None = None,
     node_s: float = NODE_HARVEST_S,
+    order: Callable[[Area], float] | None = None,
+    cap: bool = True,
 ) -> list[Area]:
     """`v` harvests (spice capability, field footprint); `travel` gets you there, e.g. the scout
     ornithopter you are flying (straight line, no planning range). Defaults to `v`.
     `yield_at(x, y)` multiplies what an area yields (PvP bonus); `need` is how many feasible
-    areas to route exactly (the target plus its alternative lines)."""
+    areas to route exactly (the target plus its alternative lines).
+    `order` ranks by its own key instead of by value (a tour nearest first, a chance find most
+    likely first): the value bound cannot tell which areas such a ranking needs routed.
+    `cap=False` keeps every area, so a caller can look for its current target before cutting."""
     t = travel or v
     wanted = {m.lower() for m in resource.marker_types}
     areas = _clusters([n for n in nodes if n.marker in wanted])
@@ -168,7 +175,7 @@ def recommend(
     if drive_over and not v.harvests_spice:
         for a in areas:
             a.reasons.append(f"{v.name} cannot harvest spice")
-        return sorted(areas, key=lambda a: a.distance_m)[:MAX_REPORTED]
+        return _capped(sorted(areas, key=lambda a: a.distance_m), cap)
     if not drive_over:
         _patches(areas)
 
@@ -190,22 +197,46 @@ def recommend(
         for a in far:
             if a.feasible:
                 a.reasons.insert(0, "far: straight-line estimate")
-    candidates.sort(key=lambda t: -t[0])
     need = need or (max(top, 3) if top else 3)
+    def evaluate(batch: list[Area]) -> None:
+        _evaluate(batch, pose, grid, v, base, drive_over, t, node_s)
+    if order is None:
+        candidates.sort(key=lambda c: -c[0])
+        _route_best_first(candidates, need, evaluate)
+        areas.sort(key=lambda a: (not a.feasible, -a.utility, a.distance_m or 0))
+    else:
+        _route_in_order(sorted((a for _, a in candidates), key=order), need, evaluate)
+        areas.sort(key=lambda a: (not a.feasible, order(a), a.distance_m or 0))
+    areas = _capped(areas, cap)
+    return areas[:top] if top else areas
+
+
+def _capped(areas: list[Area], cap: bool) -> list[Area]:
+    return areas[:MAX_REPORTED] if cap else areas
+
+
+def _route_best_first(candidates: list[tuple[float, Area]], need: int, evaluate: Callable[[list[Area]], None]) -> None:
+    """Route by upper bound in batches; stop once no unrouted area could beat the `need`-th best routed one."""
     i = 0
     while i < len(candidates):
         batch = [a for _, a in candidates[i : i + ROUTE_BATCH]]
         i += ROUTE_BATCH
-        _evaluate(batch, pose, grid, v, base, drive_over, t, node_s)
+        evaluate(batch)
         best = sorted((a.utility for _, a in candidates[:i] if a.feasible), reverse=True)
         if len(best) >= need and i < len(candidates) and best[need - 1] >= candidates[i][0]:
             for _, a in candidates[i:]:
                 a.reasons.append("cannot beat the areas above")
-            break
+            return
 
-    areas.sort(key=lambda a: (not a.feasible, -a.utility, a.distance_m or 0))
-    areas = areas[:MAX_REPORTED]
-    return areas[:top] if top else areas
+
+def _route_in_order(ordered: list[Area], need: int, evaluate: Callable[[list[Area]], None]) -> None:
+    """Route in the caller's order until `need` areas are feasible; the rest come after them anyway."""
+    for i in range(0, len(ordered), ROUTE_BATCH):
+        evaluate(ordered[i : i + ROUTE_BATCH])
+        if sum(a.feasible for a in ordered[: i + ROUTE_BATCH]) >= need:
+            for a in ordered[i + ROUTE_BATCH :]:
+                a.reasons.append("not routed: the areas above come first")
+            return
 
 
 def _patches(areas: list[Area]) -> None:
@@ -251,8 +282,11 @@ def _upper_bound(a: Area, pose: Pose, v: VehicleProfile, base, drive_over: bool,
                  node_s: float = NODE_HARVEST_S) -> float:
     out = math.hypot(a.x - pose.x, a.y - pose.y)
     back = math.hypot(a.x - base[0], a.y - base[1]) if base else out
-    if not drive_over and not t.flies:  # may park up to PARK_RADIUS away
-        out, back = max(0.0, out - PARK_RADIUS_CM), max(0.0, back - PARK_RADIUS_CM)
+    if not t.flies:
+        # routes run between cell centres: the start cell's centre is up to half a diagonal from you, and a
+        # park cell counts when its centre is within PARK_RADIUS + half a cell (drive-over: the goal's centre)
+        slack = CELL_CM * math.sqrt(2) if drive_over else PARK_RADIUS_CM + CELL_CM / 2 + CELL_CM * math.sqrt(2) / 2
+        out, back = max(0.0, out - slack), max(0.0, back - slack)
     travel = out / t.speed_cms + back / t.loaded_speed_cms
     expected, harvest_s = _harvest(a, v, drive_over, travel_s=travel, node_s=node_s)
     return _utility(expected, travel + harvest_s, drive_over, travel)
@@ -266,28 +300,19 @@ def _evaluate(batch: list[Area], pose: Pose, grid: TerrainGrid, v: VehicleProfil
             straight = math.hypot(a.x - pose.x, a.y - pose.y)
             out_s = straight / t.speed_cms
             back_s = (math.hypot(a.x - base[0], a.y - base[1]) if base else straight) / t.loaded_speed_cms
-            walk_s, note = 0.0, None
-            if drive_over and not v.flies:
-                # flying there, but the harvester still has to work the field
-                size = max((SPICE_SIZE[n.marker] for n in a.nodes), key=lambda s: SPICE_UNITS[s])
-                fp = grid.footprint_access(a.x, a.y, SPICE_RADIUS_CM[size], v)
-                if fp < v.min_footprint:
-                    a.reasons.append(f"only {fp:.0%} of the field is drivable by {v.name}")
-                    continue
+            walk_s, notes = 0.0, []
         else:
             access = _access(a, pose, grid, v, base, drive_over)
             if access is None:
                 a.reasons.append(f"no practical {v.name} route" + ("" if drive_over else " to within 150 m"))
                 continue
-            out_s, back_s, walk_s, note = access
-            if drive_over:
-                size = max((SPICE_SIZE[n.marker] for n in a.nodes), key=lambda s: SPICE_UNITS[s])
-                fp = grid.footprint_access(a.x, a.y, SPICE_RADIUS_CM[size], v)
-                if fp < v.min_footprint:
-                    a.reasons.append(f"only {fp:.0%} of the field is drivable by {v.name}")
-                    continue
-        if note:
-            a.reasons.append(note)
+            out_s, back_s, walk_s, notes = access
+        # flying there or not, a ground harvester still has to work the field
+        rough = _field_too_rough(a, grid, v) if drive_over and not (t.flies and v.flies) else None
+        if rough:
+            a.reasons.append(rough)
+            continue
+        a.reasons.extend(notes)
         expected, harvest_s = _harvest(a, v, drive_over, walk_s, out_s + back_s, node_s)
         if expected <= 0:
             a.reasons.append(f"too far to mine anything in a {SESSION_S / 60:.0f} min session")
@@ -297,8 +322,19 @@ def _evaluate(batch: list[Area], pose: Pose, grid: TerrainGrid, v: VehicleProfil
         a.trip_s = out_s + harvest_s + back_s
         a.utility = _utility(expected, a.trip_s, drive_over, out_s + back_s)
         if a.live_nodes == 0:
-            seen = any(n.source == "memory" for n in a.nodes)
-            a.reasons.append("seen active earlier" if seen else "not yet confirmed live")
+            if any(n.source == "memory" for n in a.nodes):
+                a.reasons.append("seen active earlier")
+            elif any(n.source == "guild" for n in a.nodes):
+                a.reasons.append("a guildmate saw it active")
+            else:
+                a.reasons.append("not yet confirmed live")
+
+
+def _field_too_rough(a: Area, grid: TerrainGrid, v: VehicleProfile) -> str | None:
+    """Why `v` cannot work the area's largest field, or None when enough of it is drivable."""
+    size = max((SPICE_SIZE[n.marker] for n in a.nodes), key=lambda s: SPICE_UNITS[s])
+    fp = grid.footprint_access(a.x, a.y, SPICE_RADIUS_CM[size], v)
+    return f"only {fp:.0%} of the field is drivable by {v.name}" if fp < v.min_footprint else None
 
 
 def _access(a: Area, pose: Pose, grid: TerrainGrid, v: VehicleProfile, base, drive_over: bool):
@@ -307,8 +343,8 @@ def _access(a: Area, pose: Pose, grid: TerrainGrid, v: VehicleProfile, base, dri
     out = grid.route((pose.x, pose.y), (a.x, a.y), v, radius)
     if out is None:
         return None
-    back = grid.route(base, (a.x, a.y), v, radius) if base else out
-    if back is None:
+    back_s, notes = _back_leg(a, out, grid, v, base, radius)
+    if back_s is None:
         return None
     walk_s = 0.0
     if not drive_over:
@@ -317,7 +353,20 @@ def _access(a: Area, pose: Pose, grid: TerrainGrid, v: VehicleProfile, base, dri
         park_z = ev.z_mean if ev and ev.z_mean is not None else None
         climb_m = max(0.0, (a.z - park_z) / 100) if park_z is not None else 0.0
         walk_s = math.hypot(px - a.x, py - a.y) / WALK_CMS + climb_m * CLIMB_PENALTY_S_PER_M
-    return out[0] / v.speed_cms, back[0] / v.loaded_speed_cms, walk_s, _confidence(out, back)
+    return out[0] / v.speed_cms, back_s, walk_s, notes
+
+
+def _back_leg(a: Area, out: tuple, grid: TerrainGrid, v: VehicleProfile, base, radius: float):
+    """(seconds back to base or None if no route, notes). A base farther than the route window lies outside
+    any search from it, so that leg is a straight-line estimate rather than "no route"."""
+    if base and max(abs(a.x - base[0]), abs(a.y - base[1])) > PLAN_RANGE_CM:
+        notes = [n for n in (_confidence(out, out),) if n]
+        return math.hypot(a.x - base[0], a.y - base[1]) / v.loaded_speed_cms, [*notes, "base far: straight-line estimate back"]
+    back = grid.route(base, (a.x, a.y), v, radius) if base else out
+    if back is None:
+        return None, []
+    note = _confidence(out, back)
+    return back[0] / v.loaded_speed_cms, [note] if note else []
 
 
 def _confidence(o: tuple, b: tuple) -> str | None:

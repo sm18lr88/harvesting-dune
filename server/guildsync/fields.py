@@ -61,6 +61,10 @@ def number(value: object, field: str, low: float = -math.inf, high: float = math
 def text(value: object, field: str, pattern: re.Pattern, max_len: int) -> str:
     if not isinstance(value, str) or len(value) > max_len or not pattern.fullmatch(value):
         raise BadField(field)
+    try:
+        value.encode("utf-8")  # JSON lets a lone surrogate through; SQLite cannot store it
+    except UnicodeEncodeError:
+        raise BadField(field) from None
     return value
 
 

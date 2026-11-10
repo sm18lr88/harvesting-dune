@@ -157,3 +157,17 @@ def test_the_page_says_when_the_companion_does_not_track_the_session():
     assert det.peers_snapshot()["needsTracking"] is True and det.outbox(1) is None
     det.handle(BusMessage("delta", TOPIC, MAIN), 1)
     assert det.peers_snapshot()["needsTracking"] is False
+
+
+def test_a_named_character_with_an_id_replaces_a_known_other_name_without_id():
+    det = Detector(None)
+    det.handle(BusMessage("delta", TOPIC, {"characterName": "Alia", "battlegroupId": "bg-EU-1"}), 1)
+    det.handle(BusMessage("delta", TOPIC, {"characterName": "Leto", "characterId": 42}), 2)
+    assert det.identity == {"characterName": "Leto", "characterId": 42} and not det.identity_ready
+
+
+def test_the_same_id_under_a_new_name_is_no_switch():
+    det = Detector(None)
+    det.handle(BusMessage("delta", TOPIC, {"characterName": "Alia", "characterId": 42, "battlegroupId": "bg-EU-1"}), 1)
+    det.handle(BusMessage("delta", TOPIC, {"characterName": "Alia II", "characterId": 42}), 2)
+    assert det.identity == {"characterName": "Alia II", "characterId": 42, "battlegroupId": "bg-EU-1"}

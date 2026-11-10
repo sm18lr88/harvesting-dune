@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import http.client
 import json
 import logging
 import time
@@ -64,8 +65,11 @@ BRIDGE_VERSION = hashlib.blake2b(_BRIDGE_TEMPLATE.encode(), digest_size=6).hexdi
 BRIDGE_SCRIPT = _BRIDGE_TEMPLATE.replace("%VERSION%", BRIDGE_VERSION)
 
 
+_DIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # a proxy set on the PC cannot reach 127.0.0.1
+
+
 def list_targets(port: int) -> list[dict]:
-    with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/list", timeout=3) as r:
+    with _DIRECT.open(f"http://127.0.0.1:{port}/json/list", timeout=3) as r:
         return json.load(r)
 
 
@@ -113,7 +117,8 @@ class Page:
             self.closed.set()
             for fut in self._pending.values():
                 if not fut.done():
-                    fut.cancel()
+                    # never cancel(): a CancelledError in the caller would read as shutdown and end its loop for good
+                    fut.set_exception(ConnectionError(f"page {self.url} closed"))
 
     async def call(self, method: str, timeout: float = 15, **params: Any) -> dict:
         if self.closed.is_set():
@@ -124,9 +129,15 @@ class Page:
         self._pending[call_id] = fut
         try:
             await self.ws.send(json.dumps({"id": call_id, "method": method, "params": params}))
-            return await asyncio.wait_for(fut, timeout)
+            msg = await asyncio.wait_for(fut, timeout)
         finally:
             self._pending.pop(call_id, None)  # timed out or failed: never leak the waiter
+            if fut.done() and not fut.cancelled():
+                fut.exception()  # a page that closed while we sent: the caller already has its own error
+        err = msg.get("error")
+        if err is not None:  # e.g. "Execution context was destroyed." while the page navigates
+            raise RuntimeError(f"{method} failed: {err.get('message') if isinstance(err, dict) else err}")
+        return msg
 
     async def evaluate(self, expression: str, await_promise: bool = False, timeout: float = 15) -> Any:
         res = await self.call("Runtime.evaluate", timeout=timeout, expression=expression, returnByValue=True, awaitPromise=await_promise)
@@ -181,7 +192,7 @@ class CompanionHub:
         return time.monotonic() - self._failing_since
 
     async def _attach(self, target: dict) -> None:
-        ws = await websockets.connect(target["webSocketDebuggerUrl"], max_size=128 * 1024 * 1024)
+        ws = await websockets.connect(target["webSocketDebuggerUrl"], max_size=128 * 1024 * 1024, proxy=None)
         page = Page(target, ws, self.inbox)
         try:
             log.info("bridge %s: %s", page.url, await page.install())
@@ -209,21 +220,29 @@ class CompanionHub:
                 # re-send current state of every topic from the new source
                 await best.evaluate(f"chrome.webview.postMessage({{type:'subscribe',payload:{{topics:{json.dumps(TOPICS)}}}}})")
 
+    def _drop_closed(self) -> None:
+        for pid in [pid for pid, p in self.pages.items() if p.closed.is_set()]:
+            self.pages.pop(pid)
+        if self.primary is not None and self.primary.closed.is_set():
+            self.primary = None
+
     async def maintain(self) -> None:
         while True:
             try:
                 targets = companion_pages(await asyncio.to_thread(list_targets, self.port))
                 self._warned = False
                 self._seen, self._failing_since = True, None
-            except (OSError, ValueError) as exc:  # refused, timed out, or a half-answer mid-shutdown
+            except (OSError, ValueError, http.client.HTTPException) as exc:  # refused, timed out, or a half-answer mid-shutdown
                 if self._failing_since is None:
                     self._failing_since = time.monotonic()
                 if not self._warned:
                     log.warning("DevTools port %s not reachable (%s); start the companion with scripts/start-companion-feed.ps1", self.port, exc)
                     self._warned = True
-                targets = []
-            for pid in [pid for pid, p in self.pages.items() if p.closed.is_set()]:
-                self.pages.pop(pid)
+                self._drop_closed()
+                # no page work now: a slow page must not delay the probe that ends a short outage
+                await asyncio.sleep(min(self.poll_s, 1.0))
+                continue
+            self._drop_closed()
             for t in targets:
                 if t["id"] not in self.pages:
                     try:

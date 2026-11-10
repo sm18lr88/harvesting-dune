@@ -1,15 +1,17 @@
 """What the guild shared: drawn as aged rings in our partition only, listed on the settings page,
-never in the ranking, and a guild "gone" report never outlives the node's respawn time."""
+in the ranking only for spice (the newest report of a site wins), and a guild "gone" report never
+outlives the node's respawn time."""
 
 import logging
 
-from helpers import CELL_CM, actors, ore, pose, session
+from helpers import CELL_CM, actors, ore, pose, session, spice
 
 from harvesting_dune import logsetup
 from harvesting_dune.app import Detector
 from harvesting_dune.feed import BusMessage
 
 KEY = "gs1_alpha001_Qm9vdHN0cmFwVGVzdEtleUFscGhhMDAx"
+OTHER_KEY = "gs1_bravo002_VGVzdE9ubHlCcmF2b0tleVNlY3JldDAy"
 DD, LAYOUT = "deepdesert_1", "deepdesert_1_07"
 GROUP = "prd-srv-test-alpha-erg"
 WHO = {"characterName": "Paul Test", "characterId": 1001, "battlegroupId": GROUP}
@@ -217,3 +219,126 @@ def test_our_own_eyes_win_over_a_fresh_gone_report():
     assert det.peer_stale_keys() == {"BP_Magnetite:30000:0"}
     actors(det, ore("live", 30_200, 0), world=DD, t=2)
     assert det.peer_stale_keys() == set() and det.page_state()["stale"] == []
+
+
+FAR = 300_000.0  # 3 km: beyond what our own companion loads
+
+
+def target_x(det, resource="spice_large"):
+    det.ui("resource", resource)
+    det.compute(det.clock)
+    dest = det.page_state()["dest"]
+    return None if dest is None else round(dest["x"])
+
+
+def test_a_guildmates_active_large_field_is_the_target_when_nobody_saw_it_later():
+    det = detector()
+    det.ingest_peer(response(sightings=[sighting("spice", FAR, 0, age=60.0)]), 10.0)
+    assert target_x(det) == FAR
+    assert "a guildmate saw it active" in det.page_state()["dest"]["detail"]
+
+
+def test_a_crowd_site_a_guildmate_saw_empty_is_no_target_until_someone_sees_it_active():
+    det = detector()
+    det.load_scan([{"type": "BP_SpiceField_Large_C", "map_marker_id": "spicefieldlarge", "x": FAR, "y": 0, "z": 0,
+                    "metadata": {"spawned": True, "fillRate": 1}}], 200, 1)
+    assert target_x(det) == FAR  # only the crowd database knows it: the fallback target
+    [row] = det.scan.nodes()
+    det.ingest_peer(response(sightings=[sighting("stale", FAR, 0, age=600.0, rowKey=row.row_key, distCm=1500.0)]), 10.0)
+    assert target_x(det) is None  # the crowd row has no time: any report beats it
+    det.ingest_peer(response(sightings=[sighting("spice", FAR, 0, age=1200.0)]), 11.0)
+    assert target_x(det) is None  # seen active before it was seen empty
+    det.ingest_peer(response(sightings=[sighting("spice", FAR, 0, age=5.0)]), 12.0)
+    assert target_x(det) == FAR  # seen active again since
+
+
+def test_our_own_later_look_beats_a_guildmates_report_and_loses_to_a_newer_one():
+    det = detector()
+    actors(det, spice("site", FAR, 0, "Large", fill=0, spawned=False), world=DD, t=500)  # we see it empty
+    det.ingest_peer(response(sightings=[sighting("spice", FAR, 0, age=100.0)]), 10.0)  # active at t=400
+    assert target_x(det) is None
+    actors(det, world=DD, t=520)  # out of our load range now: our last look was at t=500
+    assert target_x(det) is None
+    det.ingest_peer(response(sightings=[sighting("spice", FAR, 0, age=5.0)]), 11.0)  # active at t=515
+    assert target_x(det) == FAR
+
+
+def test_a_guildmates_empty_report_ends_our_older_memory_of_an_active_field():
+    det = detector()
+    actors(det, spice("site", FAR, 0, "Large", fill=0.9), world=DD, t=100)
+    actors(det, world=DD, t=110)  # remembered: active at t=100, now out of range
+    assert target_x(det) == FAR
+    det.load_scan([{"type": "BP_SpiceField_Large_C", "map_marker_id": "spicefieldlarge", "x": FAR, "y": 0, "z": 0}], 200, 110)
+    [row] = det.scan.nodes()
+    det.ingest_peer(response(sightings=[sighting("stale", FAR, 0, age=5.0, rowKey=row.row_key, distCm=1500.0)]), 12.0)
+    assert target_x(det) is None
+
+
+def test_a_large_search_never_leads_to_a_guildmates_medium_field():
+    det = detector()
+    det.ingest_peer(response(sightings=[sighting("spice", FAR, 0, marker="spicefieldmedium", size="medium")]), 10.0)
+    assert target_x(det) is None and det.nodes({"spicefieldlarge"}) == []
+    assert target_x(det, "spice_medium") == FAR
+
+
+def test_a_new_character_on_another_battlegroup_draws_none_of_the_old_ones_finds():
+    det = detector()
+    det.ingest_peer(response(sightings=[sighting("ship", 1000, 0)], presence=[member(1002, "Chani Test")]), 10.0)
+    assert det.peer_marks()
+    det.handle(BusMessage("delta", "dune.trackedSession",
+                          {"characterName": "Feyd Other", "characterId": 2002, "battlegroupId": "prd-srv-test-other-erg"}), 20)
+    assert det.peer_marks() == [] and det.peers_snapshot()["sightings"] == []
+
+
+def test_a_new_key_draws_and_ranks_nothing_the_old_key_received():
+    det = detector()
+    det.ingest_peer(response(sightings=[sighting("spice", FAR, 0, observers=("alpha001",))]), 10.0)  # our own find, echoed
+    assert det.peer_marks() == []
+    det.set_sync_key(OTHER_KEY)
+    assert det.peer_marks() == [] and det.peer_spice_reports() == []
+
+
+def pin(oid, cid, name, rev, tag="tagalpha"):
+    return {"id": oid, "kind": "pin", "scope": {"worldId": DD, "layout": LAYOUT},
+            "geometry": {"type": "point", "x": 1000.0, "y": 0.0, "z": 0.0}, "body": {"label": oid.upper()},
+            "ttlS": 3600, "ageS": 1, "characterId": cid, "characterName": name, "playerTag": tag, "rev": rev}
+
+
+def test_a_same_key_alts_pin_becomes_ours_when_a_later_reply_shows_our_tag():
+    det = detector()
+    det.ingest_peer({**response(), "objects": [pin("alt1", 1009, "Paul Alt", rev=1)]}, 10.0)
+    det.ingest_peer({**response(), "objects": [pin("own1", 1001, "Paul Test", rev=2)]}, 11.0)
+    assert sorted(m["id"] for m in det.peers_snapshot()["objects"]["mine"]) == ["alt1", "own1"]
+
+
+def test_a_guildmates_absurd_coordinates_are_skipped_and_the_settings_page_still_renders():
+    det = detector()
+    huge = 1.7e308
+    det.ingest_peer(response(sightings=[sighting("spice", huge, huge)],
+                             presence=[member(1002, "Chani Test", x=huge, y=huge)]), 10.0)
+    snap = det.peers_snapshot()
+    assert snap["sightings"] == []
+    assert {m["name"]: m["distanceM"] for m in snap["members"]}["Chani Test"] is None
+
+
+class Counted:
+    """A loaded actor that counts how often its marker is read."""
+
+    def __init__(self, actor, reads) -> None:
+        self._actor, self._reads = actor, reads
+
+    def __getattr__(self, name):
+        if name == "marker":
+            self._reads.append(1)
+        return getattr(self._actor, name)
+
+
+def test_drawing_guild_ore_rings_reads_each_loaded_actor_once_not_once_per_row():
+    det = detector()
+    actors(det, *[ore(f"n{i}", 5000.0 * i, 50_000) for i in range(200)], world=DD, t=2)
+    det.ingest_peer(response(sightings=[sighting("ore", 5000.0 * i, -50_000, marker="magnetiteore") for i in range(100)]), 10.0)
+    reads = []
+    for t in det.store.items.values():
+        t.actor = Counted(t.actor, reads)
+    assert {r["kind"] for r in det.peer_marks()} == {"peer"}
+    assert len(reads) <= 200

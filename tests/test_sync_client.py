@@ -8,13 +8,14 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
 from guildsync import httpd
 from guildsync.httpd import Rejected, make_server
 from guildsync.problems import OTHER_KEY as OWNED, invalid
-from helpers import pose, session
+from helpers import actors, pose, session, spice
 
 from harvesting_dune import logsetup, syncloop
 from harvesting_dune.app import Detector
@@ -247,6 +248,46 @@ def test_a_failed_upload_never_carries_its_records_into_another_world(tmp_path, 
     assert retry["partition"] == {"worldId": "survival_1", "layout": "survival_1"} and retry["records"] == []
 
 
+def test_a_refused_record_is_dropped_and_the_sync_goes_on_without_backoff(tmp_path, guild, logs, monkeypatch):
+    url, api, _ = guild()
+    api.script = [Rejected(400, invalid("records[0].type"))]
+    runner = runner_for(tmp_path, url)
+    runner.det.peer_note("blow", "spicefieldlarge", 5000.0, 0.0, 0.0, 1.0, size="large")
+    assert drive(runner, monkeypatch, lambda d: True) == [15.0]
+    assert [[r["cls"] for r in b["records"]] for b in api.bodies] == [["blow"], []]  # the same body is refused again
+    assert runner.sync.pending == {} and runner.det.peers.last_error is None
+    assert any(r.levelno == logging.WARNING and "records[0].type" in r.getMessage() for r in logs.records)
+
+
+def test_a_spice_fill_outside_0_to_1_is_never_published(tmp_path):
+    det = runner_for(tmp_path, "https://127.0.0.1:1").det
+    actors(det, spice("S1", 5000, 0, "Large", fill=1.5), spice("S2", 9000, 0, "Large", fill=0.5), t=2, world="deepdesert_1")
+    assert [r["fill"] for r in det.outbox(3.0)["records"] if r["cls"] == "spice"] == [None, 0.5]
+
+
+class Swapping(SyncClient):
+    """Each reply arrives after the player saved another key on the settings page."""
+
+    def __init__(self, det) -> None:
+        super().__init__(server="https://127.0.0.1:1")
+        self.det = det
+
+    def exchange(self, key, body, path="/v1/sync"):
+        self.det.set_sync_key(OTHER_KEY)
+        return {**FIRST_POLL, "since": 9000}
+
+
+def test_a_reply_for_a_replaced_key_is_never_applied_to_the_new_one(tmp_path):
+    det = runner_for(tmp_path, "https://127.0.0.1:1").det
+    det.peer_note("blow", "spicefieldlarge", 5000.0, 0.0, 0.0, 1.0, size="large")
+    client, pace = Swapping(det), syncloop.Pace()
+    assert asyncio.run(syncloop._sync(det, client, KEY, pace)) is False and pace.forced
+    assert (det.peers.key_state, det.key_checked_at, det.peers.since) == ("unknown", None, 0)
+    assert client.pending == {}  # the old key's server took the find: never sent again under the new key
+    assert asyncio.run(syncloop._profile_call(det, client, KEY, {}, "/v1/profile")) == {}
+    assert det.key_checked_at is None
+
+
 def test_the_client_gzips_big_bodies_and_reads_gzipped_answers(tmp_path, guild, logs):
     url, api, _ = guild()
     big = [{"cls": "ore", "x": float(i), "observer": "Leto Test"} for i in range(80)]
@@ -268,3 +309,110 @@ def test_a_server_without_profile_routes_never_slows_the_syncs(tmp_path, guild, 
     assert drive(runner, monkeypatch, lambda d: len(d) == 2) == [15.0, 15.0]
     assert len(api.bodies) == 1 and runner.det.peers.last_error is None
     assert runner.det.profile_upload(1e12) is None  # the refused profile waits until it changes
+
+
+def first_sync(tmp_path, guild) -> tuple:
+    """A detector that synced once in Deep Desert layout 07 (the reply's cursor: 1); returns (runner, api, pace)."""
+    url, api, _ = guild()
+    runner, pace = runner_for(tmp_path, url), syncloop.Pace()
+    assert asyncio.run(syncloop._sync(runner.det, runner.sync, KEY, pace)) and runner.det.peers.since == FIRST_POLL["next"]
+    return runner, api, pace
+
+
+def test_the_first_sync_on_a_new_map_asks_for_everything_shared_there(tmp_path, guild, logs):
+    runner, api, pace = first_sync(tmp_path, guild)
+    session(runner.det, "survival_1")  # the cursor came from layout 07: Hagga Basin's older finds are below it
+    assert asyncio.run(syncloop._sync(runner.det, runner.sync, KEY, pace))
+    assert [(b["partition"]["layout"], b["since"]) for b in api.bodies] == [("deepdesert_1_07", 0), ("survival_1", 0)]
+
+
+def test_finds_answered_during_a_loading_screen_are_asked_for_again_back_on_the_map(tmp_path, guild, logs):
+    runner, api, pace = first_sync(tmp_path, guild)
+    api.script = [(200, {**FIRST_POLL, "next": 2})]
+    session(runner.det, None)  # loading screen: the heartbeat goes on for layout 07, its rows cannot be placed
+    assert asyncio.run(syncloop._sync(runner.det, runner.sync, KEY, pace))
+    session(runner.det, "deepdesert_1")
+    assert asyncio.run(syncloop._sync(runner.det, runner.sync, KEY, pace))
+    assert [b["since"] for b in api.bodies] == [0, 1, 1]
+
+
+class ClosingGame(SyncClient):
+    """Each reply arrives after the companion said the game session ended."""
+
+    def __init__(self, det) -> None:
+        super().__init__(server="https://127.0.0.1:1")
+        self.det = det
+
+    def exchange(self, key, body, path="/v1/sync"):
+        self.det.handle(BusMessage("delta", "dune.status", {"hasGameSession": False}), 5)
+        return {**FIRST_POLL, "next": 50}
+
+
+def test_a_reply_that_arrives_after_the_game_closed_is_never_applied(tmp_path):
+    det = runner_for(tmp_path, "https://127.0.0.1:1").det
+    pace = syncloop.Pace()
+    assert asyncio.run(syncloop._sync(det, ClosingGame(det), KEY, pace)) is False and pace.forced
+    assert (det.peers.since, det.peers.connected_as, det.peers.last_sync) == (0, None, None)
+
+
+class SwitchingCharacter(SyncClient):
+    """The profile upload's answer arrives after the player switched to another character."""
+
+    def __init__(self, det) -> None:
+        super().__init__(server="https://127.0.0.1:1")
+        self.det = det
+
+    def exchange(self, key, body, path="/v1/sync"):
+        self.det.handle(BusMessage("delta", "dune.trackedSession", {**WHO, "characterName": "Paul Alt", "characterId": 1002}), 5)
+        return {"ok": True}
+
+
+def test_a_profile_upload_answered_after_a_character_switch_leaves_the_new_characters_upload_due(tmp_path):
+    det = runner_for(tmp_path, "https://127.0.0.1:1").det
+    assert asyncio.run(syncloop._profiles(det, SwitchingCharacter(det), KEY))
+    upload = det.profile_upload(time.time())
+    assert upload is not None and upload["identity"]["characterId"] == 1002
+
+
+def test_the_goodbye_after_the_game_closes_asks_from_the_cursor_it_held(tmp_path, guild, logs):
+    runner, api, pace = first_sync(tmp_path, guild)
+    runner.det.handle(BusMessage("delta", "dune.status", {"hasGameSession": False}), 5)
+    asyncio.run(syncloop._farewell(runner.det, runner.sync, pace))
+    bye = api.bodies[-1]
+    assert bye["presence"]["leaving"] and bye["since"] == FIRST_POLL["next"]
+
+
+def test_a_wake_up_never_cuts_a_failure_pause_short(tmp_path, guild, logs, monkeypatch):
+    url, api, _ = guild()
+    api.script = [Rejected(503, {"error": "server"}), Rejected(503, {"error": "server"})]
+    runner = runner_for(tmp_path, url)
+    delays, sent = [], []
+
+    async def nap(seconds, wake):
+        delays.append(seconds)
+        sent.append(len(api.bodies))
+        if len(delays) == 3:
+            raise Stop
+        return (1.0, True) if len(delays) == 1 else (seconds, False)  # the first pause is woken after 1 s
+
+    monkeypatch.setattr(syncloop, "nap", nap)
+    with pytest.raises(Stop):
+        asyncio.run(runner.sync_loop())
+    assert (delays[:2], sent[:2]) == ([30.0, 29.0], [1, 1])
+
+
+def test_a_retry_after_of_a_day_pauses_the_sync_for_ten_minutes_at_most(tmp_path, guild, logs, monkeypatch):
+    url, api, _ = guild()
+    api.script = [Rejected(429, {"error": "rate limited"}, {"Retry-After": "86400"})]  # a proxy's answer, say
+    runner = runner_for(tmp_path, url)
+    assert drive(runner, monkeypatch, lambda d: True) == [600.0]
+
+
+def test_a_cut_sightings_page_forces_the_next_sync_at_once(tmp_path, guild, logs, monkeypatch):
+    url, api, _ = guild()
+    row = FIRST_POLL["sightings"][0]
+    page = [{**row, "x": row["x"] + i * 10_000, "rev": i + 1} for i in range(500)]  # the server's page size: more wait
+    api.script = [(200, {**FIRST_POLL, "sightings": page, "next": 500})]
+    runner = runner_for(tmp_path, url)
+    assert drive(runner, monkeypatch, lambda d: True) == [15.0]  # the only wait comes after the second sync
+    assert [b["since"] for b in api.bodies] == [0, 500]

@@ -20,6 +20,7 @@ from .routes import parse_routes
 log = logging.getLogger(__name__)
 
 GRACE_S = 72 * 3600.0
+AHEAD_S = 300.0  # a check stamped further ahead came from a fast PC clock: counting from it would stretch GRACE_S
 REFUSED = ("invalid", "expired")  # key states the server set with a 401: no request until a new key
 TEXT = {
     "no-key": "Enter your guild key to use the detector.",
@@ -35,7 +36,7 @@ def gate_reason(key_set: bool, key_state: str, checked_at: float | None, now: fl
         return "no-key"
     if key_state in REFUSED:
         return "rejected" if key_state == "invalid" else "expired"
-    if checked_at is None or now - checked_at > GRACE_S:
+    if checked_at is None or not -AHEAD_S <= now - checked_at <= GRACE_S:
         return "unreachable"
     return None
 
@@ -63,7 +64,7 @@ class GateMixin:
     def gate_text(self, reason: str | None, now: float) -> str | None:
         if reason != "unreachable":
             return TEXT.get(reason) if reason else None
-        if self.key_checked_at is None:
+        if self.key_checked_at is None or self.key_checked_at > now:
             return "Server unreachable: the key cannot be checked."
         return f"Server unreachable for {int((now - self.key_checked_at) // 3600)} h: ask the admin."
 
@@ -80,10 +81,11 @@ class GateMixin:
         if is_open == self._gate_was:
             return False
         self._gate_was = is_open
-        if not is_open:
-            self.areas, self.hotspot = [], None
         log.info("detector %s (%s)", "on" if is_open else "off", self.gate_reason(now) or "key ok")
-        self._changed()
+        if is_open:
+            self._changed()
+        else:
+            self._restart_ranking()
         return True
 
     def key_checked(self, now: float) -> None:

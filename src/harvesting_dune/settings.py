@@ -42,7 +42,7 @@ def load(det: Detector) -> None:
         extras = s.get("minimapExtras", [])
         det.minimap_extras = {k for k in extras if isinstance(k, str) and k in EXTRA_BY_KEY} if isinstance(extras, list) else set()
         det.lines_enabled = bool(s.get("lines", True))
-        if s.get("resource") in BY_KEY or (isinstance(s.get("resource"), str) and s["resource"].startswith("item:")):
+        if isinstance(s.get("resource"), str) and (s["resource"] in BY_KEY or s["resource"].startswith("item:")):
             det.resource_key = s["resource"]  # an item not in the index yet falls back to spice until it is
         else:  # settings from before the choice was saved: the one ticked resource
             ticked = [r.key for r in MINIMAP_RESOURCES if r.key not in det.minimap_hidden]
@@ -64,7 +64,7 @@ def load(det: Detector) -> None:
         for k, b in (bases.items() if isinstance(bases, dict) else ()):
             world, _, seed = k.rpartition("|")
             if world and isinstance(b, list) and len(b) == 2 and all(isinstance(c, (int, float)) for c in b):
-                det._bases[(world, int(seed) if seed.lstrip("-").isdigit() else None)] = (float(b[0]), float(b[1]))
+                det._bases[(world, int(seed) if seed.lstrip("-").isascii() and seed.lstrip("-").isdigit() else None)] = (float(b[0]), float(b[1]))
     except (TypeError, ValueError, AttributeError):
         log.warning("ignoring malformed parts of %s", det.settings_path)
     _load_sync(det, s)

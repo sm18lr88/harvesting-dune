@@ -14,7 +14,7 @@ import stat
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from urllib.parse import parse_qsl
+from urllib.parse import parse_qsl, unquote_plus
 
 from .problems import invalid, problem
 
@@ -110,6 +110,8 @@ def _matches(if_none_match: str | None, etag: str) -> bool:
 def _page(query: str) -> tuple[str, int] | None:
     """(after, limit) from the list's query string; None for any other parameter, which gets 404 like
     a key in a URL. A bad value raises ValueError naming the field."""
+    if not {unquote_plus(p.partition("=")[0]) for p in query.split("&") if p} <= {"after", "limit"}:
+        return None  # by name first: the field-count bound below must not turn a 404 into a 400
     try:
         pairs = parse_qsl(query, keep_blank_values=True, max_num_fields=2)
     except ValueError:

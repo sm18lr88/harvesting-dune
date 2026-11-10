@@ -3,7 +3,6 @@ name: CI
 
 on:
   push:
-    branches: [master]
   pull_request:
   workflow_dispatch:
 
@@ -21,25 +20,26 @@ jobs:
       - uses: astral-sh/setup-uv@v6
 
       - name: Install
-        run: uv sync
+        run: uv sync --locked
 
       - name: Tests (the bridge tests use the runner's Node.js)
         run: uv run pytest -q
 
       - name: Lint
-        run: uvx ruff check src tests server --select F,E9,B
+        run: uvx ruff check src tests server scripts --select F,E9,B
 
       - name: PowerShell scripts parse (Windows PowerShell 5.1, as the autorun task uses)
         shell: powershell
         run: |
+          # Write-Host, not Write-Error: under this shell's stop-on-error setting the first Write-Error ends the step, hiding every later bad file
           $bad = 0
           Get-ChildItem scripts\*.ps1, installer\*.ps1 | ForEach-Object {
             $e = $null
             [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$e)
-            if ($e) { Write-Error "$($_.Name): $($e -join '; ')"; $bad++ }
+            if ($e) { Write-Host "::error::$($_.Name): $($e -join '; ')"; $bad++ }
           }
           Get-ChildItem scripts\*.ps1, installer\*.ps1, *.cmd | ForEach-Object {
-            if ([IO.File]::ReadAllText($_.FullName) -match '[^\x00-\x7F]') { Write-Error "$($_.Name): non-ASCII text breaks Windows PowerShell 5.1 and cmd.exe"; $bad++ }
+            if ([IO.File]::ReadAllText($_.FullName) -match '[^\x00-\x7F]') { Write-Host "::error::$($_.Name): non-ASCII text breaks Windows PowerShell 5.1 and cmd.exe"; $bad++ }
           }
           if ($bad) { exit 1 }
 
@@ -57,7 +57,7 @@ jobs:
           enable-cache: false
 
       - name: Install (for the throwaway local guild server; uv is hidden afterwards)
-        run: uv sync
+        run: uv sync --locked
 
       - name: Build the zip
         shell: powershell
@@ -87,7 +87,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
 
       - name: Install
-        run: uv sync
+        run: uv sync --locked
 
-      - name: Guild server tests
-        run: uv run pytest -q tests/test_sync_storage.py tests/test_sync_httpd.py tests/test_sync_server.py
+      - name: Guild server tests (every test file that imports only guildsync)
+        run: uv run pytest -q tests/test_sync_storage.py tests/test_sync_httpd.py tests/test_sync_server.py tests/test_sync_data.py tests/test_sync_keys.py tests/test_sync_objects_server.py tests/test_sync_openapi.py

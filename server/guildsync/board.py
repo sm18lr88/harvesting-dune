@@ -25,7 +25,8 @@ class BoardMixin:
                          records: list[dict], now: float, sent_at: float) -> int:
         """Upsert records by the wire key; each gets the next rev. Returns the number upserted.
 
-        The newest observation keeps the row's fields; an older one only adds its observer.
+        The newest observation keeps the row's fields; an older one only adds its observer. Newest
+        on the server's clock (receipt time less lag): two players' PC clocks are never compared.
         """
         world, layout = partition["worldId"], partition["layout"]
         with self._tx() as c:
@@ -34,15 +35,16 @@ class BoardMixin:
                 rev += 1
                 cell = [battlegroup, layout, r["cls"], r["type"], int(r["x"] // CELL_CM), int(r["y"] // CELL_CM)]
                 key = json.dumps(cell)
-                old = c.execute("SELECT observed_at, observers FROM sightings WHERE key = ?", (key,)).fetchone()
+                old = c.execute("SELECT received_at, lag, observers FROM sightings WHERE key = ?", (key,)).fetchone()
                 observers = json.dumps(sorted({key_id, *json.loads(old["observers"])}) if old else [key_id])
-                if old is not None and r["observedAt"] < old["observed_at"]:
+                lag = _lag(sent_at, r["observedAt"])
+                if old is not None and now - lag < old["received_at"] - old["lag"]:
                     c.execute("UPDATE sightings SET observers = ?, rev = ? WHERE key = ?", (observers, rev, key))
                     continue
                 c.execute(
                     f"INSERT OR REPLACE INTO sightings({_SIGHTING_COLS}) VALUES ({', '.join('?' * 20)})",
                     (key, battlegroup, world, layout, r["cls"], r["type"], r["x"], r["y"], r["z"], r["fill"],
-                     r["size"], r["rowKey"], r["distCm"], r["observedAt"], now, _lag(sent_at, r["observedAt"]),
+                     r["size"], r["rowKey"], r["distCm"], r["observedAt"], now, lag,
                      key_id, observer_name, observers, rev),
                 )
             c.execute("UPDATE meta SET v = ? WHERE k = 'rev'", (str(rev),))

@@ -113,7 +113,8 @@ if (-not $task) {
 } else {
     $args0 = ($task.Actions | Select-Object -First 1).Arguments
     $info = Get-ScheduledTaskInfo -TaskName 'harvesting-dune autorun' -ErrorAction SilentlyContinue
-    if ($args0 -notlike "*$watcherScript*") {
+    # IndexOf, not -notlike: a path with [ ] would be read as a wildcard class and never match itself
+    if (([string]$args0).IndexOf($watcherScript, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
         Check 'Autorun task' 'FAIL' 'points to a different folder (the folder was possibly moved or copied)' "Run $installCmd from this folder."
     } elseif ($task.State -eq 'Disabled') {
         Check 'Autorun task' 'FAIL' 'disabled' 'Run: Enable-ScheduledTask -TaskName "harvesting-dune autorun"'
@@ -136,7 +137,9 @@ if (-not $gt) {
     Check 'Companion running' 'PASS' "pid $(@($gt)[0].Id)"
     if ($version) {
         Check 'DevTools port' 'PASS' "127.0.0.1:$Port answers"
-        $pages = @(Get-Json "http://127.0.0.1:$Port/json/list") | Where-Object { $_.type -eq 'page' -and $_.url -like '*gaming.tools*' }
+        # WHY assign first: Windows PowerShell 5.1's Invoke-RestMethod emits a JSON array as one object, so piping the call filters the whole array at once
+        $list = Get-Json "http://127.0.0.1:$Port/json/list"
+        $pages = @($list | Where-Object { $_.type -eq 'page' -and $_.url -like '*gaming.tools*' })
         $dune = @($pages | Where-Object { $_.url -match '/dune' })
         if ($dune.Count -gt 0) { Check 'Companion Dune pages' 'PASS' (($dune | ForEach-Object { $_.url }) -join ', ') }
         else { Check 'Companion Dune pages' 'WARN' 'no Dune map or minimap page open' 'In the companion, open Dune: Awakening (the map or the minimap overlay).' }

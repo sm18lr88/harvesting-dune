@@ -8,7 +8,7 @@ import hashlib
 import json
 import logging
 from importlib import resources
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import SplitResult, parse_qs, urlsplit
 
 from . import logsetup
 from .app import Detector
@@ -55,9 +55,13 @@ def _loggable(value: str | None) -> str:
     return " = (hidden)" if "gs1_" in value else f" = {value}"
 
 
+def _small_int(text: str) -> int | None:
+    """isdigit alone accepts superscripts, and int() raises past 4300 digits: both are bad requests."""
+    return int(text) if text.isascii() and text.isdigit() and len(text) <= 18 else None
+
+
 def _content_length(headers: dict[str, str]) -> int | None:
-    length = headers.get("content-length", "")
-    return int(length) if length.isascii() and length.isdigit() else None  # isdigit alone accepts superscripts
+    return _small_int(headers.get("content-length", ""))
 
 
 def _parse_key(body: bytes) -> str | None:
@@ -89,10 +93,37 @@ async def _sync_key(det: Detector, reader: asyncio.StreamReader, headers: dict[s
 
 def _character(det: Detector, cid: str) -> bytes:
     """GET /character?id=: one guild character's profile for the Characters view."""
-    detail = det.character_detail(int(cid)) if cid.isascii() and cid.isdigit() else None
+    number = _small_int(cid)
+    detail = None if number is None else det.character_detail(number)
     if detail is None:
         return _response("404 Not Found", "text/plain", b"not found")
     return _response("200 OK", "application/json", json.dumps(detail).encode())
+
+
+async def _read_head(reader: asyncio.StreamReader) -> tuple[list[str], dict[str, str]]:
+    """The request line's words and the lower-cased headers; ValueError for a line over the reader's limit."""
+    request_line = (await reader.readline()).decode("latin1").split()
+    headers: dict[str, str] = {}
+    for _ in range(MAX_HEADER_LINES):
+        line = await reader.readline()
+        if line in (b"\r\n", b"\n", b""):
+            break
+        name, _, value = line.decode("latin1").partition(":")
+        headers[name.strip().lower()] = value.strip()
+    return request_line, headers
+
+
+def _target(word: str) -> SplitResult | None:
+    try:
+        return urlsplit(word)
+    except ValueError:  # e.g. "//[": a bad request, not a detector problem
+        return None
+
+
+def _log_page_open(path: str, headers: dict[str, str]) -> None:
+    if path in ("/", "/events"):
+        log.info("settings page: %s from %s", "loaded" if path == "/" else "live updates connected",
+                 headers.get("user-agent", "?")[:80])
 
 
 async def serve(det: Detector, host: str = "127.0.0.1", port: int = 8765) -> asyncio.Server:
@@ -106,17 +137,20 @@ async def serve(det: Detector, host: str = "127.0.0.1", port: int = 8765) -> asy
 
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
-            request_line = (await reader.readline()).decode("latin1").split()
-            headers: dict[str, str] = {}
-            for _ in range(MAX_HEADER_LINES):
-                line = await reader.readline()
-                if line in (b"\r\n", b"\n", b""):
-                    break
-                name, _, value = line.decode("latin1").partition(":")
-                headers[name.strip().lower()] = value.strip()
+            try:
+                request_line, headers = await _read_head(reader)
+            except ValueError:  # a line over the reader's 64 KiB limit: a bad request, not a detector problem
+                logsetup.limited(log, "settings:oversized", "settings page: request line or header too long")
+                writer.write(_response("431 Request Header Fields Too Large", "text/plain", b""))
+                await writer.drain()
+                return
             if len(request_line) < 2:
                 return
-            method, target = request_line[0], urlsplit(request_line[1])
+            method, target = request_line[0], _target(request_line[1])
+            if target is None:
+                writer.write(_response("400 Bad Request", "text/plain", b""))
+                await writer.drain()
+                return
             if not _allowed(headers, method, port):
                 log.warning("settings page: refused %s %s (host %r, origin %r)", method, target.path,
                             headers.get("host"), headers.get("origin"))
@@ -127,9 +161,7 @@ async def serve(det: Detector, host: str = "127.0.0.1", port: int = 8765) -> asy
             query = {k: v[0] for k, v in parse_qs(target.query).items()}
             path = target.path
 
-            if path in ("/", "/events"):
-                log.info("settings page: %s from %s", "loaded" if path == "/" else "live updates connected",
-                         headers.get("user-agent", "?")[:80])
+            _log_page_open(path, headers)
             if path == "/events":
                 writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\n\r\n")
                 q: asyncio.Queue[str] = asyncio.Queue()
@@ -152,9 +184,9 @@ async def serve(det: Detector, host: str = "127.0.0.1", port: int = 8765) -> asy
             elif method == "POST" and path == "/control":
                 action, value = query.get("action", ""), query.get("value")
                 log.info("settings page: %s%s", action, _loggable(value))
-                det.ui(action, value)
+                status = "204 No Content" if det.ui(action, value) else "400 Bad Request"
                 det.publish_viewer()
-                writer.write(_response("204 No Content", "text/plain", b""))
+                writer.write(_response(status, "text/plain", b""))
             elif path == "/character":
                 writer.write(_character(det, query.get("id", "")))
             elif path == "/state":

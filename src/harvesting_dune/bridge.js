@@ -46,9 +46,12 @@
       dd.routeShown = false;
     }
   };
+  // an emptied list is dispatched once too, or our actors stay on the page until the next native list
   const applyActors = () => {
-    if (!dd.extraActors.length || !dd.lastActors) return;
-    dispatch('dune.map.actors', { ...dd.lastActors, actors: [...(dd.lastActors.actors || []), ...dd.extraActors] });
+    if (!dd.lastActors || (!dd.extraActors.length && !dd.actorsShown)) return;
+    const native = Array.isArray(dd.lastActors.actors) ? dd.lastActors.actors : [];
+    dispatch('dune.map.actors', { ...dd.lastActors, actors: [...shownNative(native), ...dd.extraActors] });
+    dd.actorsShown = dd.extraActors.length > 0;
   };
   // Run after every other listener so native updates never overwrite ours.
   const later = (fn) => setTimeout(fn, 0);
@@ -56,6 +59,8 @@
   // An empty spice spawn point: the game replicates every site, active or not.
   const isSpawnPoint = (a) =>
     a && a.spawned === false && !(a.fillRate > 0) && /spicefield/i.test(a.markerType || a.spriteKey || a.map_marker_id || a.type || '');
+  // only the native list is filtered: our own overlay actors are never taken for spawn points
+  const shownNative = (actors) => (dd.hideSpawnPoints ? actors.filter((a) => !isSpawnPoint(a)) : actors);
 
   // Installed at document start (every reload), we can hook the page's own listeners and
   // rewrite native messages in flight: one render per update instead of native + ours.
@@ -64,7 +69,9 @@
     if (!m || typeof m !== 'object' || m.__dd || m.type === 'topicReset') return m;
     const t = m.topic, p = m.payload;
     if (t === 'dune.map.actors' && p && Array.isArray(p.actors) && (dd.extraActors.length || dd.hideSpawnPoints)) {
-      const shown = dd.hideSpawnPoints ? p.actors.filter((a) => !isSpawnPoint(a)) : p.actors;
+      const shown = shownNative(p.actors);
+      // the page now holds what we merged in: a later clear must know to take it off again
+      dd.actorsShown = dd.extraActors.length > 0;
       return { ...m, payload: { ...p, actors: dd.extraActors.length ? shown.concat(dd.extraActors) : shown } };
     }
     if (t === 'dune.trackedDestination' && dd.dest && !(p && p.hasDestination))
@@ -81,6 +88,11 @@
   // on Object.prototype sees that assignment, so we get each map instance as it is created. The
   // property then becomes a normal own property of that object; nothing else changes. Installed into a
   // running page, it still sees maps the page makes later (opening the map in the map window).
+  // a closed map stays destroyed: dropping it keeps the cap for maps the page still shows
+  const track = (m) => {
+    dd.maps = dd.maps.filter((x) => x && !x._destroyed);
+    if (dd.maps.length < 8) dd.maps.push(m);
+  };
   if (!Object.prototype.hasOwnProperty('_createdLayers')) {
     const kept = new WeakMap(); // only if an object refuses own properties: the map still gets its value
     Object.defineProperty(Object.prototype, '_createdLayers', {
@@ -90,7 +102,7 @@
         try {
           Object.defineProperty(this, '_createdLayers', { value: v, writable: true, configurable: true, enumerable: true });
         } catch (err) { try { kept.set(this, v); } catch (_) {} report('layers', err); }
-        if (dd.maps.length < 8) dd.maps.push(this);
+        try { track(this); } catch (err) { report('layers', err); }
       },
     });
   }
@@ -115,7 +127,7 @@
         if (k === 'constructor' || typeof desc.value !== 'function' || !desc.configurable) continue;
         const orig = desc.value;
         const w = function (...args) {
-          try { if (isMap(this) && !dd.maps.includes(this) && dd.maps.length < 8) { dd.maps.push(this); restore(); } } catch (err) { report('late-map', err); }
+          try { if (isMap(this) && !dd.maps.includes(this)) { track(this); if (dd.maps.includes(this)) restore(); } } catch (err) { report('late-map', err); }
           return orig.apply(this, args);
         };
         Object.defineProperty(proto, k, { ...desc, value: w });
@@ -193,7 +205,12 @@
     const p = m.type === 'topicReset' ? null : m.payload;
     const reset = m.type === 'topicReset';
     if (t === 'dune.trackedDestination') { dd.nativeDest = p; if (dd.dest) (reset ? later : fix)(applyDest); }
-    else if (t === 'dune.landsraad.routeMode') { dd.nativeRouteMode = !!(p && p.enabled === true); if (dd.route) (reset ? later : fix)(applyRoute); }
+    else if (t === 'dune.landsraad.routeMode') {
+      const was = dd.nativeRouteMode;
+      dd.nativeRouteMode = !!(p && p.enabled === true);
+      // leaving Landsraad mode: transform only flips the mode back on, the page still holds the Landsraad route
+      if (dd.route) (reset || (was && !dd.nativeRouteMode) ? later : fix)(applyRoute);
+    }
     else if (t === 'dune.map.route') { dd.nativeRoute = p; if (dd.route) (reset ? later : fix)(applyRoute); }
     else if (t === 'dune.map.actors') { dd.lastActors = p; if (dd.extraActors.length) fix(applyActors); }
     else if (t === 'dune.session' && p) { dd.lastSession = p; }
@@ -389,12 +406,13 @@
         dd.altLayer = map.layers.createStaticLayer();
         map.layers.addLayer(dd.altLayer, { z: 11 }); // just under the main route line (z 12)
         dd.altMap = map;
+        dd.altTransform = null; // another map can use another world->map transform
       }
       dd.altLayer.clearVectors();
       dd.stats.redraws++;
       const tt = calibrate(map);
-      if (!tt || !pose || (!dd.alternatives.length && !dd.objects.length)) return tt ? 'empty' : 'uncalibrated';
-      const from = map.view.translate(pose.x, pose.y, tt);
+      if (!tt || (!dd.alternatives.length && !dd.objects.length)) return tt ? 'empty' : 'uncalibrated';
+      const from = pose ? map.view.translate(pose.x, pose.y, tt) : null;
       for (const a of dd.alternatives) {
         if (!Number.isFinite(a.x) || !Number.isFinite(a.y)) continue; // peer items come from other players: one bad item must not blank the rest
         const faded = a.pulse && dd.altPhase;
@@ -406,6 +424,7 @@
           if (Number.isInteger(a.num)) for (const seg of digits(map, tt, a, r, a.num)) dd.altLayer.addPolyline(seg, style);
           continue;
         }
+        if (!from) continue; // only lines start at the player; rings and pins are world-anchored
         const to = map.view.translate(a.x, a.y, tt);
         for (const seg of a.dash ? dashes(from, to) : [[from, to]]) dd.altLayer.addPolyline(seg, style);
       }
@@ -439,11 +458,25 @@
     else if (!want && pulseTimer) { clearInterval(pulseTimer); pulseTimer = 0; dd.altPhase = false; }
   };
 
+  // The newest map data file the page downloaded is the map it shows now; its name is the map id.
+  const newestMapFile = () => {
+    const urls = performance.getEntriesByType('resource').map((e) => e.name).filter((u) => /\/maps\/[^/?]+\.d\.json/.test(u));
+    const url = urls.length ? urls[urls.length - 1] : null;
+    return { url, map: url ? (url.match(/\/maps\/([^/?]+)\.d\.json/) || [])[1] || null : null };
+  };
+  // labelled: { map, samples }, so the detector can refuse another map's grid (the map window can
+  // show another map than yours); unlabelled stays a bare list for runners that predate the map id
+  const withMap = (labelled, map, samples) => (labelled ? { map, samples } : samples);
+
   // (grid cell, x, y) of the page's own markers: the detector fits the map grid from these, so
   // grid cells and PvP rows follow the map as the companion draws it, week after week.
-  dd.gridSamples = (limit = 400) => {
+  // gtmap keeps no map id, so live markers are labelled with the page's newest map data file.
+  dd.gridSamples = (limit = 400, labelled = false) =>
+    withMap(labelled, labelled ? newestMapFile().map : null, liveGridSamples(limit));
+  const liveGridSamples = (limit) => {
     const out = [];
     for (const map of dd.maps) {
+      if (!map || map._destroyed) continue; // a closed map can show another world's grid
       for (const layer of (map && map._createdLayers) || []) {
         const items = layer && layer._items;
         if (!items || typeof items.values !== 'function') continue;
@@ -461,11 +494,11 @@
   };
   // Same pairs from the map data file the page downloaded (every location carries its grid cell),
   // for pages that draw no labelled markers themselves (the minimap, the in-game overlay).
-  dd.gridSamplesFromData = async (limit = 600) => {
-    const urls = performance.getEntriesByType('resource').map((e) => e.name).filter((u) => /\/maps\/[^/?]+\.d\.json/.test(u));
-    if (!urls.length) return [];
-    const raw = await (await origFetch(urls[urls.length - 1])).json();
-    if (!Array.isArray(raw)) return [];
+  dd.gridSamplesFromData = async (limit = 600, labelled = false) => {
+    const { url, map } = newestMapFile();
+    if (!url) return withMap(labelled, null, []);
+    const raw = await (await origFetch(url)).json();
+    if (!Array.isArray(raw)) return withMap(labelled, map, []);
     // compact "devalue" layout: every field holds the index of its value in the same array
     const out = [];
     for (const o of raw) {
@@ -478,17 +511,15 @@
         if (out.length >= limit) break;
       }
     }
-    return out;
+    return withMap(labelled, map, out);
   };
 
   // The named shipwrecks ("The Wreck of the Pallas") from the same map data file: fixed places to loot.
   dd.shipwrecksFromData = async (limit = 500) => {
-    const urls = performance.getEntriesByType('resource').map((e) => e.name).filter((u) => /\/maps\/[^/?]+\.d\.json/.test(u));
-    if (!urls.length) return null;
-    const url = urls[urls.length - 1];
+    const { url, map } = newestMapFile(); // the detector checks the map id is your map
+    if (!url) return null;
     const raw = await (await origFetch(url)).json();
     if (!Array.isArray(raw)) return null;
-    const map = (url.match(/\/maps\/([^/?]+)\.d\.json/) || [])[1] || null; // the detector checks it is your map
     const seen = new Set(), out = [];
     for (const o of raw) {
       if (!o || typeof o !== 'object' || Array.isArray(o) || !('iconId' in o) || !('location' in o)) continue;

@@ -1,7 +1,8 @@
 <#
 .SYNOPSIS
   Dot-source for the list of program files and for copying them into (or removing them from) the
-  per-user install folder. The release zip (installer\build-zip.ps1) uses the same list.
+  per-user install folder, and for the autorun task that belongs to one folder. The release zip
+  (installer\build-zip.ps1) uses the same list.
   Only a folder with the install marker file is ever cleaned, so a development clone stays intact.
 #>
 
@@ -10,6 +11,7 @@ $AppFiles = @('pyproject.toml', 'uv.lock', 'README.md', 'LICENSE', 'version.txt'
 $UserScripts = @('install.ps1', 'install-autorun.ps1', 'companion-autorun.ps1', 'companion-path.ps1',
     'doctor.ps1', 'uv-setup.ps1', 'app-files.ps1', 'guild-key.ps1')
 $AppMarker = '.harvesting-dune-install'
+$AutorunTaskName = 'harvesting-dune autorun'
 
 function Get-FullPath([string]$path) { return [IO.Path]::GetFullPath($path).TrimEnd('\') }
 
@@ -80,6 +82,18 @@ function Copy-AppFiles([string]$from, [string]$to) {
         if (Test-Path -LiteralPath $source) { Invoke-WithRetry { Copy-Item -LiteralPath $source -Destination $to -Force } }
     }
     Set-Content -LiteralPath (Join-Path $to $AppMarker) -Value ([string](Get-AppVersion $from)) -Encoding ASCII
+}
+
+function Test-TaskIsOurs([string]$repo) {
+    $task = Get-ScheduledTask -TaskName $AutorunTaskName -ErrorAction SilentlyContinue
+    if (-not $task) { return $false }
+    $watcher = Join-Path $repo 'scripts\companion-autorun.ps1'
+    return ([string]($task.Actions | Select-Object -First 1).Arguments).IndexOf($watcher, [StringComparison]::OrdinalIgnoreCase) -ge 0
+}
+
+function Remove-OwnAutorun([string]$repo) {
+    # an earlier install of this folder would still start the watcher at the next logon
+    if (Test-TaskIsOurs $repo) { & (Join-Path $repo 'scripts\install-autorun.ps1') -Uninstall }
 }
 
 function Remove-AppFiles([string]$dir, [switch]$KeepUninstaller) {

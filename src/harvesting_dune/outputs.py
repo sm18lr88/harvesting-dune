@@ -8,7 +8,8 @@ Contract with bridge.js (`__dd.set(page_state())`):
                                                               farm route: "route-stop" rings carry `num` (drawn inside), "route-done" rings are dim
     stale: [row key]                                          -> scan rows the page must drop
     extraActors: [actor]                                      -> overlay markers we add
-    objects: [{id, kind, x, y, z, body, mine, ageS, ttlS, by}] -> guild objects for this map (objects.py); bridge.js draws known kinds only
+    objects: [{id, kind, x, y, z, body, mine, by}]            -> guild objects for this map (objects.py); bridge.js draws known kinds only;
+                                                              no ages: a ticking value would make every push differ and redraw
     problem: {id, text} | None                                -> notice in the map window after an error
 `badge()` is the one-line minimap text; `picker()` feeds the map window's picker.
 With the gate closed (gate.py) every key is empty and the badge is None: the detector draws nothing.
@@ -25,6 +26,7 @@ from .catalog import NEVER_TARGET, RESOURCES
 from .ranking import ALT_LIMIT, ROUTED_AREAS
 from .store import REMEMBER_SPICE_S, Status
 from .vehicle import VEHICLE_CHOICES
+from .zones import is_pvp
 
 # secondary lines: thinner and fainter than the companion's main route line (cyan, weight 4)
 FRESH_STYLE = {"color": "rgba(255,70,200,0.85)", "weight": 2.5}  # fresh blows: magenta
@@ -125,7 +127,7 @@ class OutputsMixin:
             "route": None,
             "stale": scan_stale + sorted(self.peer_stale_keys() - set(scan_stale)),
             "extraActors": self.scan.overlay_actors(self.store.pose, limit=100 if self.lean else 200)
-            + self.remembered_spice(time.time(), limit=50 if self.lean else 100)
+            + self.remembered_spice(self.clock, limit=50 if self.lean else 100)
             + self.ships.overlay(self.clock),
             "problem": self.problem_notice(),
         }
@@ -190,7 +192,7 @@ class OutputsMixin:
     def alternatives(self, best: Area | None, limit: int = ALT_LIMIT) -> list[dict]:
         """Thin secondary lines to the next best options.
 
-        Spice modes list confirmed-active medium and large fields (never small ones), bigger first.
+        Spice modes list confirmed-active fields of the searched sizes (never small ones), bigger first.
         Other resources list the next best patches in ranking order; areas backed only by scan rows
         get a fainter line than ones seen live.
         """
@@ -204,16 +206,11 @@ class OutputsMixin:
     def _spice_alternatives(self, best: Area | None, pose) -> list[tuple[tuple, dict]]:
         out = []
         rank = {"large": 0, "medium": 1, "small": 2}
+        wanted = {m.lower() for m in self.resource.marker_types}  # a size mode lines only its own size
         for t in self.store.items.values():
             a = t.actor
-            if not a.is_spice_field or t.status in (Status.OFFLINE, Status.MISSING_IN_RANGE):
+            if not self._spice_line_allowed(t, wanted, best, pose):
                 continue
-            if t.last_live is None or self.clock - t.last_live > REMEMBER_SPICE_S:
-                continue
-            if best is not None and math.hypot(a.x - best.x, a.y - best.y) < AREA_RADIUS_CM:
-                continue  # that is the main target
-            if a.marker in NEVER_TARGET:
-                continue  # small fields are not worth the trip
             size = a.spice_size
             style = dict(ALT_STYLE[size])
             kind = "field"
@@ -225,6 +222,21 @@ class OutputsMixin:
             order = (0 if kind == "fresh" else 1, rank[size], kind == "harvested", pose.dist2d(a.x, a.y))
             out.append((order, {"x": a.x, "y": a.y, "size": size, "kind": kind, **style}))
         return out
+
+    def _spice_line_allowed(self, t, wanted: set[str], best: Area | None, pose) -> bool:
+        """Read from live state, not from the ranking, so the same limits as the ranking job apply here."""
+        a = t.actor
+        if not a.is_spice_field or a.marker not in wanted or t.status in (Status.OFFLINE, Status.MISSING_IN_RANGE):
+            return False
+        if t.last_live is None or self.clock - t.last_live > REMEMBER_SPICE_S:
+            return False
+        if best is not None and math.hypot(a.x - best.x, a.y - best.y) < AREA_RADIUS_CM:
+            return False  # that is the main target
+        if a.marker in NEVER_TARGET:
+            return False  # small fields are not worth the trip
+        if self.max_km > 0 and pose.dist2d(a.x, a.y) > self.max_km * 100_000:
+            return False
+        return not (self._pvp_only_here() and not is_pvp(a.y, self.last_pve_row, self._fit()))
 
     def _node_alternatives(self, best: Area | None) -> list[tuple[tuple, dict]]:
         out = []
@@ -278,7 +290,8 @@ class OutputsMixin:
         event = self.recent_event(wall)
         if event and self.resource.harvest == "drive_over":
             return event  # spice news only while you search spice
-        if self.notice and self.resource.harvest != "drive_over" and wall - self.notice[0] <= NOTICE_S:
+        feed_now = self.clock if now is None else now  # the notice is stamped on the feed clock (ranking.py)
+        if self.notice and self.resource.harvest != "drive_over" and feed_now - self.notice[0] <= NOTICE_S:
             return self.notice[1]
         short = SHORT_NAMES.get(self.resource_key, self.resource.name)
         vehicle = {"sandcrawler": "crawler", "ornithopter": "thopter"}.get(self.plan_vehicle, self.plan_vehicle)

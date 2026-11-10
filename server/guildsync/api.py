@@ -10,9 +10,10 @@ from dataclasses import dataclass
 
 from .board import MAX_LAG_S
 from .fields import ANY, PLACE, TYPE, BadField, flag, identity, integer, join, number, obj, text
+from .keystore import KeyRevoked
 from .objects import MAX_LIVE_PER_GROUP, MAX_LIVE_PER_KEY, ObjectCap, parse_objects
 from .presence import NEXT_S_RANGE, OLD_CLIENT, Beat
-from .problems import OTHER_KEY, invalid, problem
+from .problems import BAD_KEY, CHALLENGE, OTHER_KEY, invalid, problem
 from .profiles import ProfileRoutes
 
 MAX_RECORDS = 200
@@ -111,10 +112,13 @@ class Api(ProfileRoutes):
             req = parse(body)
         except BadField as bad:
             return 400, invalid(bad.field)
-        if not self.storage.upsert_character(key["id"], req.identity, now):  # the ownership check, in the write
-            return 403, OTHER_KEY
         try:
+            # the ownership check, in the write that also stores the objects: a refused object claims nothing
+            if not self.storage.upsert_character(key["id"], req.identity, now, req.objects):
+                return 403, OTHER_KEY
             self._write(key["id"], req, ip, now)
+        except KeyRevoked:
+            return 401, BAD_KEY, CHALLENGE
         except ObjectCap as cap:
             limit = MAX_LIVE_PER_KEY if cap.which == "key" else MAX_LIVE_PER_GROUP
             detail = f"The {cap.which} already has {limit} live objects: delete one first."
@@ -124,8 +128,6 @@ class Api(ProfileRoutes):
     def _write(self, key_id: str, req: SyncRequest, ip: str, now: float) -> None:
         s, name, group = self.storage, req.identity["characterName"], req.identity["battlegroupId"]
         lag = 0.0 if req.position is None else _lag(req.sent_at, req.position["observedAt"])
-        if req.objects:  # first: a refused object (ObjectCap) leaves the rest of the request unwritten
-            s.upsert_objects(key_id, req.identity, list(req.objects), now)
         s.upsert_presence(key_id, req.identity, req.partition, req.position, now, lag, req.beat)
         if req.records:
             s.upsert_sightings(key_id, name, group, req.partition, req.records, now, req.sent_at)
@@ -134,14 +136,14 @@ class Api(ProfileRoutes):
     def _view(self, req: SyncRequest, now: float) -> dict:
         s, group, part = self.storage, req.identity["battlegroupId"], req.partition
         me = req.identity["characterId"]
-        presence = [p for p in s.presence_for(group, now) if p["characterId"] != me]
-        rows, cursor = s.sightings_since(group, part["worldId"], part["layout"], req.since)
+        with s.snapshot():
+            presence = [p for p in s.presence_for(group, now) if p["characterId"] != me]
+            rows, cursor = s.sightings_since(group, part["worldId"], part["layout"], req.since)
+            objects, cut = s.objects_since(group, req.since, now)
         sightings = [
             {**{k: v for k, v in r.items() if k not in ("receivedAt", "lag")}, "ageS": now - r["receivedAt"] + r["lag"]}
             for r in rows
         ]
-        # after sightings_since read the global rev, so an object committed in between is not skipped
-        objects, cut = s.objects_since(group, req.since, now)
         nxt = cursor if cut is None else min(cursor, cut)
         return {"now": now, "next": nxt, "keyState": "valid", "presence": presence, "sightings": sightings,
                 "objects": objects}

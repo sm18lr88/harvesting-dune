@@ -6,7 +6,7 @@ consumes the `dune.map.actors`, `dune.player` and `dune.session` topics:
 
     dune.map.actors -> {gated, worldId?, coriolisWorldSeed?, actors: [
         {id?, actorType, markerType?, resourceItemId?, spriteKey?, x, y, z,
-         fillRate?, spawned?, reportable?}]}
+         fillRate?, spawned?, reportable?, hasLoot?}]}
     dune.player     -> {x, y, z, ...}
     dune.session    -> {worldId?, coriolisWorldSeed?, ...}
 
@@ -36,6 +36,7 @@ class Actor:
     z: float
     fill_rate: float | None
     spawned: bool | None
+    has_loot: bool | None = None  # containers: False once emptied (it stays listed)
 
     @property
     def spice_size(self) -> str | None:
@@ -65,7 +66,8 @@ def parse_stat_names(payload: object) -> list[str]:
         for key in ("name", "title", "id"):
             if isinstance(g.get(key), str):
                 names.append(g[key])
-        for e in g.get("entries") or []:
+        entries = g.get("entries")
+        for e in entries if isinstance(entries, list) else []:
             if isinstance(e, dict) and isinstance(e.get("name"), str):
                 names.append(e["name"])
     return names
@@ -100,19 +102,22 @@ def parse_actor(raw: Any) -> Actor | None:
     x, y, z = _num(raw.get("x")), _num(raw.get("y")), _num(raw.get("z"))
     if x is None or y is None:
         return None
-    spawned = raw.get("spawned")
+    spawned, has_loot = raw.get("spawned"), raw.get("hasLoot")
+    actor_type, marker_type, item, sprite = (
+        v if isinstance(v, str) else None for v in (raw.get(k) for k in ("actorType", "markerType", "resourceItemId", "spriteKey")))
     return Actor(
         key=actor_key(raw),
-        actor_type=raw.get("actorType"),
-        marker_type=raw.get("markerType"),
-        resource_item_id=raw.get("resourceItemId"),
-        sprite_key=raw.get("spriteKey"),
-        marker=marker_of(raw.get("markerType"), raw.get("spriteKey"), raw.get("actorType")) or _cage_marker(raw.get("actorType")),
+        actor_type=actor_type,
+        marker_type=marker_type,
+        resource_item_id=item,
+        sprite_key=sprite,
+        marker=marker_of(marker_type, sprite, actor_type) or _cage_marker(actor_type),
         x=x,
         y=y,
         z=z if z is not None else 0.0,
         fill_rate=_num(raw.get("fillRate")),
         spawned=spawned if isinstance(spawned, bool) else None,
+        has_loot=has_loot if isinstance(has_loot, bool) else None,
     )
 
 
@@ -149,7 +154,10 @@ class ActorParser:
             if not isinstance(raw, dict):
                 continue
             rid = raw.get("id")
-            sig = (raw.get("x"), raw.get("y"), raw.get("z"), raw.get("fillRate"), raw.get("spawned"), raw.get("markerType"), raw.get("spriteKey"))
+            if isinstance(rid, bool) or not isinstance(rid, (str, int)):
+                rid = None  # only plain ids can key the cache
+            sig = (raw.get("x"), raw.get("y"), raw.get("z"), raw.get("fillRate"), raw.get("spawned"), raw.get("markerType"), raw.get("spriteKey"),
+                   raw.get("hasLoot"))
             hit = cache.get(rid) if rid is not None else None
             actor = hit[1] if hit is not None and hit[0] == sig else parse_actor(raw)
             if actor is None:
