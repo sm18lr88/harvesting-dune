@@ -78,7 +78,7 @@ function Save-Package([string]$version, [string]$sha256) {
     $name = "harvesting-dune-$version.zip"
     $zip = Join-Path $dir $name
     Save-Download ($ManifestUrl.Substring(0, $ManifestUrl.LastIndexOf('/') + 1) + $name) $zip
-    $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+    $hash = Get-Sha256 $zip
     if ($hash -ne $sha256) { throw "the zip of $version is damaged or changed (SHA256 $hash). It was not used." }
     $pkg = Join-Path $dir 'pkg'
     Add-Type -AssemblyName System.IO.Compression.FileSystem

@@ -56,7 +56,7 @@ try {
 } finally {
     $zip.Dispose()
 }
-$sha256 = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$sha256 = Get-Sha256 $zipPath
 $manifest = '{{"version": "{0}", "sha256": "{1}"}}' -f $Version, $sha256
 [IO.File]::WriteAllText((Join-Path (Get-FullPath $OutDir) 'latest.json'), $manifest + "`n", (New-Object Text.ASCIIEncoding))
 Write-Host ("Built {0} ({1} files, {2:N0} KB)" -f $zipPath, ($entries.Count + 1), ((Get-Item -LiteralPath $zipPath).Length / 1KB))

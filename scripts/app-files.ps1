@@ -44,6 +44,14 @@ function Get-AppVersion([string]$dir) {
     return $null
 }
 
+function Get-Sha256([string]$path) {
+    # .NET, not Get-FileHash: a Windows PowerShell started from PowerShell 7 inherits its module path and has no Get-FileHash
+    $sha = [Security.Cryptography.SHA256]::Create()
+    $stream = [IO.File]::OpenRead($path)
+    try { return ([BitConverter]::ToString($sha.ComputeHash($stream)) -replace '-', '').ToLowerInvariant() }
+    finally { $stream.Dispose(); $sha.Dispose() }
+}
+
 function Get-FreeMB([string]$path) {
     try {
         $drive = New-Object System.IO.DriveInfo ([IO.Path]::GetPathRoot((Get-FullPath $path)))
