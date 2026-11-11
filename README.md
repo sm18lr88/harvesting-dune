@@ -41,7 +41,9 @@ What `Install.cmd` does:
 
 If something fails, the window stays open. It tells you the reason and how to fix it. Do the fix, then double-click `Install.cmd` again. You can run it as often as you like.
 
-**Update:** download the new ZIP file, extract it, and double-click `Install.cmd`. The new version replaces the old one. Your data and your guild key stay.
+**Updates are automatic.** You do not have to do anything, and nothing asks you a question. When autorun is on, the tool looks for a new release while you play: when the game starts, then every 15 minutes. It downloads a new version in the background and checks it. It never installs an update while the game runs. When you close the game, it installs the update. The detector restarts for a few seconds. Your data and your guild key stay. If an update fails, the tool puts the old version back. It tries the update again after 24 hours. The log is `data\update.log`. A copy installed with `git clone` does not update itself.
+
+To update by hand, download the new ZIP file, extract it, and double-click `Install.cmd`.
 
 **Uninstall:** double-click `Uninstall.cmd` in the extracted folder, or in `%LOCALAPPDATA%\Programs\harvesting-dune`. Your learned data stays in the `data` folder. To remove everything, delete that folder after the uninstall.
 

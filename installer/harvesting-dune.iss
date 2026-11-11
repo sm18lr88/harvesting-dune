@@ -47,6 +47,7 @@ Source: "..\scripts\doctor.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "..\scripts\uv-setup.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "..\scripts\app-files.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "..\scripts\guild-key.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "..\scripts\update.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "..\docs\*"; DestDir: "{app}\docs"; Flags: recursesubdirs ignoreversion
 Source: "..\pyproject.toml"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\uv.lock"; DestDir: "{app}"; Flags: ignoreversion

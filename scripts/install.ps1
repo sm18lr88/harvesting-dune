@@ -133,6 +133,7 @@ if ($Uninstall) {
     if (Test-Path -LiteralPath (Join-Path $repo $AppMarker)) {
         Start-Sleep -Milliseconds 500
         $left = @(Remove-AppFiles $repo -KeepUninstaller:(-not $copyApp))
+        Remove-Item -LiteralPath $UpdateStageDir -Recurse -Force -ErrorAction SilentlyContinue  # downloaded updates
         Write-Host 'harvesting-dune is uninstalled. Restart the companion to close its DevTools port.' -ForegroundColor Green
         Write-Host "Your learned data stays in $repo\data. To remove everything, delete the folder $repo."
         if ($left.Count) { Write-Host "Windows did not let the uninstaller remove: $($left -join ', '). Delete them by hand after a restart." -ForegroundColor Yellow }

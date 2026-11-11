@@ -252,6 +252,17 @@ If the same warning repeats, the detector logs it at most one time each minute. 
 
 When the companion closes, the detector saves its data and exits. If it does not exit within 30 s, the watcher stops it. If the detector fails, the watcher starts it again after 10 s. If it fails again and again, the wait increases to 5 min. The watcher keeps the log of the failed run as `data-run.prev.log`. The log of the watcher is `data\autorun.log`. To remove autorun, use the option `-Uninstall`.
 
+## Automatic updates
+
+The watcher starts `scripts\update.ps1` hidden at these times: when the game (`DuneSandbox-Win64-Shipping.exe`) starts, every 15 min while it runs, when it closes, and once 2 min after logon. Nothing asks the player a question. The script works like this:
+
+1. While the game runs, at most every 10 min, it downloads `latest.json` of the newest release in the public GitHub repository. The file holds the version and the SHA256 of the release zip. The release workflow attaches the file after the zip. While the game is closed, the script downloads nothing.
+2. If the version is newer, the script downloads `harvesting-dune-<version>.zip` and checks its SHA256. It makes the zip address from the version number only. It unpacks the zip into `%LOCALAPPDATA%\harvesting-dune-update`.
+3. When the game is closed, it installs the unpacked update. The `install.ps1` of the new version runs with `-NonInteractive`. It stops the watcher and the detector, keeps `data\`, and starts the watcher again. The restarted watcher does not open a new settings page.
+4. Before the install, the script copies the running version. If the install fails, it installs that copy again. It tries the failed version again after 24 h.
+
+Only a newer release is installed, never an older one. To stop a bad release, publish a release with a higher version. A folder with `.git` (a development copy) never updates itself. The log is `data\update.log`.
+
 ## Run the tool by hand (development)
 
 Use this procedure without autorun, for example when you change the code.

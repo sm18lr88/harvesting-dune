@@ -16,6 +16,8 @@
   default browser as soon as the detector answers (-NoBrowser to skip).
   The companion gets its DevTools port from the per-app WebView2 policy that
   install-autorun.ps1 writes, so it works however the companion is opened.
+  It starts update.ps1 hidden when the game starts, every 15 min while it runs, when it closes, and
+  once after logon: that script looks for a new release while the game runs and installs it after.
   Log: data\autorun.log. Detector output: data-run.log (as before).
 #>
 param(
@@ -25,6 +27,7 @@ param(
     [switch]$NoBrowser
 )
 $ErrorActionPreference = 'Continue'
+. (Join-Path $PSScriptRoot 'app-files.ps1')  # $GameProcess
 
 $repo = Split-Path -Parent $PSScriptRoot
 $detectorExe = Join-Path $repo '.venv\Scripts\harvesting-dune.exe'
@@ -67,6 +70,15 @@ function Show-Problem([string]$text) {
     } catch { Write-Log "could not show the problem message: $($_.Exception.Message)" }
 }
 
+function Start-Updater {
+    # its own hidden process: it outlives this watcher, which the installer it runs stops and starts again
+    $updater = Join-Path $PSScriptRoot 'update.ps1'
+    try {
+        Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+            '-File', "`"$updater`"", '-Port', $Port -WindowStyle Hidden -ErrorAction Stop
+    } catch { Write-Log "could not start the updater: $($_.Exception.Message)" }
+}
+
 function Stop-Detector {
     # Bounded: a process the watcher cannot end (e.g. started from an elevated console) must not
     # hold the main loop forever. The companion-gone timer retries later.
@@ -97,6 +109,15 @@ $warnedNoFeed = $false
 $warnedExe = $false
 $warnedCrash = $false
 $browserPending = -not $NoBrowser
+$nextUpdate = (Get-Date).AddMinutes(2)  # after logon: installs an update downloaded in the last session
+$gameWasUp = $false
+$updateMarker = Join-Path $repo 'data\update-restart'
+if (Test-Path -LiteralPath $updateMarker) {
+    # update.ps1 restarted this watcher: the player has the settings page already, or is away
+    Write-Log "restarted by the updater: now $(Get-Content -LiteralPath $updateMarker -TotalCount 1)"
+    Remove-Item -LiteralPath $updateMarker -Force -ErrorAction SilentlyContinue
+    $browserPending = $false
+}
 
 while ($true) {
   try {
@@ -189,6 +210,14 @@ while ($true) {
             Write-Log 'companion closed: detector saved and exited'
             $goneSince = $null
         }
+    }
+    # updates: look at game start and every 15 min of play, install right after the game closes
+    $gameUp = [bool](Get-Process -Name $GameProcess -ErrorAction SilentlyContinue)
+    if ($gameUp -ne $gameWasUp) { $nextUpdate = Get-Date }
+    $gameWasUp = $gameUp
+    if ($nextUpdate -and (Get-Date) -ge $nextUpdate) {
+        Start-Updater
+        $nextUpdate = if ($gameUp) { (Get-Date).AddMinutes(15) } else { $null }
     }
   } catch {
     Write-Log ("watcher error: {0} (line {1})" -f $_.Exception.Message, $_.InvocationInfo.ScriptLineNumber)

@@ -3,6 +3,8 @@
 files; the zip must hold exactly the scripts that install.ps1 dot-sources."""
 
 import _winapi
+import hashlib
+import json
 import os
 import re
 import shutil
@@ -105,6 +107,9 @@ def test_build_zip_holds_only_user_files(tmp_path):
         assert z.read("version.txt").strip() == b"9.9.9-test"
         cmd = z.read("Install.cmd")
         assert cmd.count(b"\n") == cmd.count(b"\r\n")
+    manifest = json.loads((tmp_path / "latest.json").read_text(encoding="ascii"))
+    digest = hashlib.sha256((tmp_path / "harvesting-dune-9.9.9-test.zip").read_bytes()).hexdigest()
+    assert manifest == {"version": "9.9.9-test", "sha256": digest}
 
 
 @pytest.mark.skipif(POWERSHELL is None, reason="needs Windows PowerShell")

@@ -72,6 +72,12 @@ def test_every_job_that_attaches_to_a_release_waits_for_the_test_suite():
     assert [name for name in uploaders if not _tested_before(name, jobs)] == []
 
 
+def test_the_update_manifest_is_attached_after_the_zip_it_names():
+    zip_job = _jobs("release.yml")["zip"]
+    uploads = [line for line in zip_job.splitlines() if "gh release upload" in line]
+    assert len(uploads) == 2 and "dist\\*.zip" in uploads[0] and "dist\\latest.json" in uploads[1]
+
+
 def test_ci_runs_on_a_push_to_any_branch():
     text = (WORKFLOWS / "ci.yml").read_text(encoding="utf8")
     triggers = text.split("\non:", 1)[1].split("\n\n", 1)[0]

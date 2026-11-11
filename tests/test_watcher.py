@@ -45,7 +45,10 @@ $global:detUp = $false
 $global:starts = 0
 function Get-Date { $global:clock }
 function Start-Sleep { param([int]$Seconds = 0, [int]$Milliseconds = 0) $global:clock = $global:clock.AddSeconds($Seconds).AddMilliseconds($Milliseconds) }
-function Get-Process { if ($global:companionUp) { [pscustomobject]@{ Id = 7 } } }
+$global:gameUp = $false
+$GameProcess = 'DuneSandbox-Win64-Shipping'
+function Get-Process { [CmdletBinding()] param([string]$Name)
+    if (($Name -eq 'GT.Launcher' -and $global:companionUp) -or ($Name -eq $GameProcess -and $global:gameUp)) { [pscustomobject]@{ Id = 7 } } }
 function Get-DetectorProcess { if ($global:detUp) { [pscustomobject]@{ ProcessId = 42 } } }
 function Test-Feed { $true }
 function Test-Path { $true }
@@ -54,6 +57,9 @@ function Get-SettingsState { $null }
 function Start-Process { $global:starts++; $global:detUp = $true }
 function Show-Problem { }
 function Write-Log { }
+$global:updaters = 0
+function Start-Updater { $global:updaters++ }
+$nextUpdate = $global:clock.AddMinutes(2); $gameWasUp = $false
 $Port = 9231; $HttpPort = 8765; $PollSeconds = 2; $NoBrowser = $true
 $repo = 'C:\\fake'; $detectorExe = 'C:\\fake\\.venv\\Scripts\\harvesting-dune.exe'
 $nextStart = [datetime]::MinValue; $startedAt = $null; $quickDeaths = 0; $goneSince = $null
@@ -77,6 +83,26 @@ def test_a_companion_restart_starts_the_detector_without_the_old_crash_backoff(t
     result = _ps(tmp_path, body, "companion-autorun.ps1")
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.strip().splitlines()[-1] == "started on the first poll: True", result.stdout + result.stderr
+
+
+def test_the_updater_runs_after_logon_then_only_around_play(tmp_path):
+    body = WATCHER_STUBS + (
+        "$global:detUp = $true\n"
+        "for ($i = 0; $i -lt 150; $i++) { . $step }\n"  # 5 min after logon
+        "$logon = $global:updaters\n"
+        "for ($i = 0; $i -lt 900; $i++) { . $step }\n"  # 30 min without the game
+        "$idle = $global:updaters\n"
+        "$global:gameUp = $true; . $step\n"  # the game starts
+        "$start = $global:updaters\n"
+        "for ($i = 0; $i -lt 600; $i++) { . $step }\n"  # 20 min of play
+        "$play = $global:updaters\n"
+        "$global:gameUp = $false; . $step\n"  # the game closes
+        "$close = $global:updaters\n"
+        "for ($i = 0; $i -lt 900; $i++) { . $step }\n"
+        "\"$logon $idle $start $play $close $($global:updaters)\"\n")
+    result = _ps(tmp_path, body, "companion-autorun.ps1")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip().splitlines()[-1] == "1 1 2 3 4 4", result.stdout + result.stderr
 
 
 def _sync_stubs(tmp_path, ssh_exit: int, agent_exit: int) -> dict[str, str]:

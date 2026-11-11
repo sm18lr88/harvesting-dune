@@ -1,6 +1,6 @@
 [project]
 name = "harvesting-dune"
-version = "0.1.0"
+version = "0.2.0"
 description = "Live Dune: Awakening resource observations from the gaming.tools companion feed, with vehicle-aware harvest scoring."
 requires-python = ">=3.14"
 dependencies = ["websockets>=15"]  # 15: connect(proxy=None)

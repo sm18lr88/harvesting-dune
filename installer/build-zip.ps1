@@ -2,6 +2,8 @@
 .SYNOPSIS
   Builds dist\harvesting-dune-<version>.zip: the release zip for guildmates (Install.cmd at the root).
   It holds only what users run: the files listed in scripts\app-files.ps1, plus version.txt.
+  Also writes dist\latest.json (version and SHA256 of the zip): the release workflow attaches it after
+  the zip, and scripts\update.ps1 on every installed PC reads it from the newest release.
   Usage: powershell -ExecutionPolicy Bypass -File installer\build-zip.ps1 -Version 1.2.3
 #>
 param(
@@ -54,4 +56,7 @@ try {
 } finally {
     $zip.Dispose()
 }
+$sha256 = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$manifest = '{{"version": "{0}", "sha256": "{1}"}}' -f $Version, $sha256
+[IO.File]::WriteAllText((Join-Path (Get-FullPath $OutDir) 'latest.json'), $manifest + "`n", (New-Object Text.ASCIIEncoding))
 Write-Host ("Built {0} ({1} files, {2:N0} KB)" -f $zipPath, ($entries.Count + 1), ((Get-Item -LiteralPath $zipPath).Length / 1KB))

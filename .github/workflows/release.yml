@@ -157,9 +157,14 @@ jobs:
           path: dist/*.zip
           if-no-files-found: error
 
-      - name: Attach the zip to the release
+      # latest.json last: installed copies (scripts\update.ps1) read it, then download the zip it names
+      - name: Attach the zip and the update manifest to the release
         if: github.event_name == 'release'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload '${{ github.event.release.tag_name }}' (Get-Item dist\*.zip).FullName --clobber -R '${{ github.repository }}'
+        run: |
+          gh release upload '${{ github.event.release.tag_name }}' (Get-Item dist\*.zip).FullName --clobber -R '${{ github.repository }}'
+          if ($LASTEXITCODE) { throw "zip upload failed ($LASTEXITCODE)" }
+          gh release upload '${{ github.event.release.tag_name }}' (Get-Item dist\latest.json).FullName --clobber -R '${{ github.repository }}'
+          if ($LASTEXITCODE) { throw "latest.json upload failed ($LASTEXITCODE)" }

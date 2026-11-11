@@ -9,9 +9,12 @@
 $AppDirs = @('src', 'docs')
 $AppFiles = @('pyproject.toml', 'uv.lock', 'README.md', 'LICENSE', 'version.txt', 'Install.cmd', 'Uninstall.cmd')
 $UserScripts = @('install.ps1', 'install-autorun.ps1', 'companion-autorun.ps1', 'companion-path.ps1',
-    'doctor.ps1', 'uv-setup.ps1', 'app-files.ps1', 'guild-key.ps1')
+    'doctor.ps1', 'uv-setup.ps1', 'app-files.ps1', 'guild-key.ps1', 'update.ps1')
 $AppMarker = '.harvesting-dune-install'
 $AutorunTaskName = 'harvesting-dune autorun'
+# outside the install folder (install.ps1 refuses a source inside it) and outside TEMP (cleaned by Windows)
+$UpdateStageDir = Join-Path $env:LOCALAPPDATA 'harvesting-dune-update'
+$GameProcess = 'DuneSandbox-Win64-Shipping'  # Dune: Awakening; updates look while it runs and install after it closes
 
 function Get-FullPath([string]$path) { return [IO.Path]::GetFullPath($path).TrimEnd('\') }
 
