@@ -4,7 +4,7 @@ harvesting-dune is a helper for Dune: Awakening that works alongside the [gaming
 
 Besides map resources, it can find parts, looted materials, schematics for unique gear, loot cages, downed ships and wrecks. It can also guide you along farm routes and share finds with your guild.
 
-It doesn't touch the game. It only reads what the companion app already shows you.
+harvesting-dune is not a hack or a cheat. It does not modify the game, read its memory or interact with the game client in any way. It only uses information that the gaming.tools companion app already displays.
 
 ## Requirements
 
