@@ -302,10 +302,11 @@ class RankingMixin:
         return is_pvp(y, self.last_pve_row, self._fit())
 
     def reported_ship_nodes(self) -> list[Node]:
-        """Downed ships other players reported (the gaming.tools scan database). The game shows a hull
-        only within ~0.5-0.9 km of you, so these are the only way to know of one farther away. A ship
-        you saw yourself (also one a worm took) is yours instead; a reported one you reach and do not
-        find is confirmed stale like any scan row. No row key: the live-only rule keeps them."""
+        """Downed ships other players reported (the gaming.tools scan database): counted on the settings
+        page, never a target. The rows carry no time, a downed ship lasts about half an hour, and one
+        Deep Desert week held 112 of them at once (live 2026-11-11: the route chased one long-gone report
+        after another). A ship you saw yourself is yours instead; a reported one you reach and do not
+        find is confirmed stale like any scan row."""
         known = list(self.ships.ships.values())
         return [Node(n.marker, n.x, n.y, n.z, "scan") for n in self.scan.nodes()
                 if n.marker == SHIP_MARKER and not any(math.hypot(s.x - n.x, s.y - n.y) <= SAME_SHIP_CM for s in known)]
@@ -394,7 +395,7 @@ class RankingMixin:
         if self.items.is_item(resource.key):
             return self.item_nodes(resource.key, now)
         if resource.key == "downed_ships":
-            return self.ships.nodes(self.clock) + self.reported_ship_nodes()
+            return self.ships.nodes(self.clock)  # only ships the game showed you; see reported_ship_nodes
         if resource.key == "shipwrecks":
             return self.shipwreck_nodes()
         return self.nodes(wanted, now, resource.counts if resource.actor_types else None)

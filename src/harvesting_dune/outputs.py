@@ -43,6 +43,8 @@ PROBLEM_SHOW_S = 30 * 60.0  # the map window's notice about an error, for this l
 # likely place, its radius growing with the chance there (40 m, up to 200 m at 25 % or more), and one
 # dashed bearing line to the most likely place (the minimap is zoomed far in: the line gives direction).
 CHANCE_RING_CM = (4_000.0, 16_000.0)
+SHIP_RING_CM = 6_000.0
+SHIP_STYLE = {"color": "rgba(255,80,80,0.95)", "weight": 3}
 CHANCE_STYLE = ({"color": "rgba(255,209,102,0.95)", "weight": 3}, {"color": "rgba(255,209,102,0.55)", "weight": 2})
 
 
@@ -66,10 +68,11 @@ class OutputsMixin:
         b = self.blows.get(key)
         return b if b and self.clock - b["t"] <= FRESH_BLOW_S else None
 
-    def recent_event(self, now: float) -> str | None:
+    def recent_event(self, now: float, markers: set[str] | None = None) -> str | None:
+        """The newest event still shown; with `markers`, the newest about one of those (lower-case) marker types."""
         while self.events and now - self.events[0][0] > EVENT_SHOW_S:
             self.events.popleft()
-        return self.events[-1][1] if self.events else None
+        return next((e[1] for e in reversed(self.events) if markers is None or (e[2] or "").lower() in markers), None)
 
     def remembered_spice(self, now: float, limit: int = 100) -> list[dict]:
         """Active fields seen earlier that are now out of load range: kept on the map for a while."""
@@ -135,7 +138,7 @@ class OutputsMixin:
             self.farm_targets(state)
         else:
             self._targets(state)
-        state["alternatives"] = state.get("alternatives", []) + self.peer_marks()  # guild rings, never ranked
+        state["alternatives"] = state.get("alternatives", []) + self.peer_marks() + self.ship_marks()  # rings, never ranked
         state["objects"] = self.object_marks()
         return state
 
@@ -167,6 +170,14 @@ class OutputsMixin:
                 "stops": [{"x": a.x, "y": a.y, "z": a.z, "houseName": f"{self.resource.name} · {self.describe(a)}"} for a in stops],
             }
             state["alternatives"] = [] if self.resource.tour else self.alternatives(best)
+
+    def ship_marks(self) -> list[dict]:
+        """A flashing ring on each downed ship the game shows right now, whatever you search: they are rare and
+        short-lived (owner, 2026-11-11). The badge keeps naming your search; a downed-ship search has its own line."""
+        if self.resource_key == "downed_ships":
+            return []
+        return [{"x": s.x, "y": s.y, "size": None, "kind": "ship-alert", "ring": SHIP_RING_CM, "pulse": True, **SHIP_STYLE}
+                for s in self.ships.active(self.clock) if s.loaded]
 
     def chance_marks(self) -> list[dict]:
         """The most likely places as rings (bigger = better chance), plus a dashed line to the best one."""
@@ -285,11 +296,14 @@ class OutputsMixin:
         if self.farm is not None:
             return self.farm_notice() or self.farm_line()
         wall = time.time() if now is None else now
-        if self.ship_alert and wall - self.ship_alert[0] <= EVENT_SHOW_S:
-            return self.ship_alert[1]  # whatever you search: downed ships are rare and short-lived
-        event = self.recent_event(wall)
+        # The badge names what you search (live 2026-11-11: during a large-field search it said "Downed ship!", then
+        # "Spice blow! medium field"). An alert shows only to the search it concerns; the ship stays on the map.
+        ship_search = self.resource_key == "downed_ships" or self.items.is_item(self.resource_key)  # ships carry items
+        if ship_search and self.ship_alert and wall - self.ship_alert[0] <= EVENT_SHOW_S:
+            return self.ship_alert[1]
+        event = self.recent_event(wall, {m.lower() for m in self.resource.marker_types})
         if event and self.resource.harvest == "drive_over":
-            return event  # spice news only while you search spice
+            return event  # spice news of the sizes you search
         feed_now = self.clock if now is None else now  # the notice is stamped on the feed clock (ranking.py)
         if self.notice and self.resource.harvest != "drive_over" and feed_now - self.notice[0] <= NOTICE_S:
             return self.notice[1]

@@ -142,6 +142,7 @@ One driving session is one vehicle, because you cannot change vehicles without g
 - Any evidence of flight makes the complete session an ornithopter, carriers included. This is the evidence of flight:
   - a take-off climb (40 m within 5 s),
   - hovering,
+  - moving up or down at 3 m/s or more, steeper than 45 degrees, in two updates in a row (no ground vehicle climbs or drops that steeply; a slow carrier that drifts while it lifts off shows this),
   - a speed above approximately 126 km/h,
   - a position far above the ground around you (80 m).
 - Without evidence of flight, the fastest sustained speed of the session gives the vehicle. Up to approximately 41 km/h, it is a sandcrawler. Above approximately 90 km/h, it is a sandbike. Between these speeds, it is a buggy.

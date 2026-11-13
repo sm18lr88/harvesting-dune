@@ -40,8 +40,14 @@ def test_a_downed_ship_is_announced_remembered_and_a_target():
     det.ui("resource", "iron")
     pose(det, SHIP_X, SHIP_Y + 90_000, t=1)  # 900 m away
     feed(det, 100, ship())
-    assert det.badge(now=100) == "Downed ship! 0.9 km away"  # whatever you search
+    assert "Downed ship" not in det.badge(now=100)  # the badge names what you search: iron
+    det.compute(100)
+    [ring] = [a for a in det.page_state()["alternatives"] if a["kind"] == "ship-alert"]  # but the ship flashes
+    assert ring["y"] == SHIP_Y and ring["pulse"] and ring["ring"]
+    det.ui("resource", "downed_ships")
+    assert det.badge(now=100) == "Downed ship! 0.9 km away"
     assert det.badge(now=200) != "Downed ship! 0.9 km away"  # for 90 s
+    det.ui("resource", "iron")
     assert "SalvageSteel" not in det.minimap_filter()[1]  # the companion always shows downed ships
     det.ui("resource", "downed_ships")
     assert det.visible_resources() == [] and det.lines_active  # the map resources step aside
@@ -76,15 +82,16 @@ def report(det, x=SHIP_X, y=SHIP_Y):
                          "x": x, "y": y, "z": 0.0}], 200, 0)
 
 
-def test_a_ship_other_players_reported_is_a_target_far_beyond_the_load_range():
+def test_a_ship_other_players_reported_is_never_a_target():
+    # live 2026-11-11: the crowd scan held 112 downed ships for one Deep Desert week, none with a time, and the
+    # route chased one long-gone report after another
     det = dd_detector()
     det.ui("resource", "downed_ships")
     report(det)
-    pose(det, SHIP_X, SHIP_Y + 500_000, t=1)  # 5 km: the game shows a hull only within ~0.9 km
+    pose(det, SHIP_X, SHIP_Y + 500_000, t=1)
     det.compute(2)
-    st = det.page_state()
-    assert st["dest"]["y"] == SHIP_Y and "not yet confirmed live" in st["dest"]["detail"]
-    assert det.snapshot()["shipsReported"] == 1
+    assert det.page_state()["dest"] is None
+    assert det.snapshot()["shipsReported"] == 1  # still counted on the settings page
 
 
 def test_a_reported_ship_where_you_saw_one_gone_is_never_a_target():
@@ -99,7 +106,7 @@ def test_a_reported_ship_where_you_saw_one_gone_is_never_a_target():
     assert det.page_state()["dest"] is None and det.snapshot()["shipsReported"] == 0
 
 
-def test_a_reported_ship_you_reach_and_do_not_see_is_dropped_and_the_route_moves_on():
+def test_a_reported_ship_you_reach_and_do_not_see_is_dropped():
     det = dd_detector()
     det.ui("resource", "downed_ships")
     far_y = SHIP_Y + 300_000  # a second reported ship 3 km farther north
@@ -107,12 +114,12 @@ def test_a_reported_ship_you_reach_and_do_not_see_is_dropped_and_the_route_moves
                          "z": 0.0} for y in (SHIP_Y, far_y)], 200, 0)
     pose(det, SHIP_X, SHIP_Y - 500_000, t=1)
     det.compute(1)
-    assert det.page_state()["dest"]["y"] == SHIP_Y
+    assert det.snapshot()["shipsReported"] == 2
     # live: hovering 410 m up, 54 m from the reported place; the game shows no hull there
     pose(det, SHIP_X, SHIP_Y - 5_400, z=41_000, t=2)
     feed(det, 3)  # snapshots come ~20 s apart: flying past, one is all you get in range
     det.compute(15)
-    assert det.page_state()["dest"]["y"] == far_y and det.snapshot()["shipsReported"] == 1
+    assert det.page_state()["dest"] is None and det.snapshot()["shipsReported"] == 1
     assert det.scan.expire(15 + 4 * 3600) == 0  # a worm took it: it does not come back like a node
     assert det.snapshot()["shipsReported"] == 1
 
@@ -121,9 +128,8 @@ def test_the_next_ship_stays_the_target_until_another_is_clearly_nearer():
     det = dd_detector()
     det.ui("resource", "downed_ships")
     north, south = SHIP_Y + 60_000, SHIP_Y - 64_000
-    det.scan.load_rows([{"type": "BP_SmallShipwreck_01_C", "map_marker_id": "salvagesteel", "x": SHIP_X, "y": y,
-                         "z": 0.0} for y in (north, south)], 200, 0)
     pose(det, SHIP_X, SHIP_Y, t=1)
+    feed(det, 1, ship("n", y=north), ship("s", y=south))  # both hulls load, 600 and 640 m away
     det.compute(1)
     assert det.page_state()["dest"]["y"] == north
     # live (journal-20261108-124343): 70 m of flight made the other ship 20 m nearer and the line flipped
@@ -141,9 +147,10 @@ def test_the_next_ship_stays_the_target_when_the_ranking_leaves_it_unrouted(monk
     det = dd_detector()
     det.ui("resource", "downed_ships")
     near, far = SHIP_Y + 60_000, SHIP_Y + 500_000
-    det.scan.load_rows([{"type": "BP_SmallShipwreck_01_C", "map_marker_id": "salvagesteel", "x": SHIP_X, "y": y,
-                         "z": 0.0} for y in (near, far)], 200, 0)
+    pose(det, SHIP_X, far - 60_000, t=0)
+    feed(det, 0, ship("f", y=far))  # seen on the way: remembered once out of load range
     pose(det, SHIP_X, SHIP_Y, t=1)
+    feed(det, 1, ship("n", y=near))
     det.compute(1)
     assert det.page_state()["dest"]["y"] == near
     rank = ranking.recommend

@@ -326,7 +326,7 @@ class IngestMixin:
         pose = self.store.pose
         dist = f"{pose.dist2d(actor.x, actor.y) / 100_000:.1f} km away" if pose else "nearby"
         text = f"Spice blow! {actor.spice_size} field {dist}"
-        self.events.append((now, text))
+        self.events.append((now, text, actor.marker))  # the badge shows it only to a search for this size
         log.info("%s at (%.0f, %.0f)", text, actor.x, actor.y)
         self.journal.write(now, BusMessage("event", "detector.spiceBlow", {"x": actor.x, "y": actor.y, "z": actor.z, "size": actor.spice_size}))
         self._restart_ranking(clear=False)  # a fresh field may be the new best

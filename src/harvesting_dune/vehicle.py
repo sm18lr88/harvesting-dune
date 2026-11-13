@@ -43,7 +43,11 @@ FLYING_MIN_CRUISE_CMS = 3500.0  # ~126 km/h sustained: no ground vehicle cruises
 FLYING_ALTITUDE_CM = 8000.0  # 80 m above the typical ground around you (dunes stay below this)
 CLIMB_CM, CLIMB_WINDOW_S = 4000.0, 5.0  # 40 m up within 5 s: a take-off, not a dune
 HOVER_MAX_CMS, HOVER_MIN_VZ_CMS = 140.0, 200.0  # < 5 km/h across while >= 2 m/s up or down
-HOVER_SAMPLES = 2
+# Steeper than 45 degrees at >= 3 m/s up or down: a ground vehicle's vertical speed is bounded by the slope it
+# drives on. Live 2026-11-11: a carrier rose 31 m in 2 s at 5 km/h, then dropped 14 m/s at 6 km/h, and was
+# called a buggy (6 km/h failed the hover rule; 37 m in 5 s missed the climb rule).
+STEEP_MIN_VZ_CMS = 300.0
+HOVER_SAMPLES = 2  # consecutive steps for a hover or a steep move: one jolt never counts
 BOARDING_IGNORE_S = 2.0  # getting in moves you a few metres: not evidence of anything
 MIN_SPEED_DT_S = 0.8  # measure speed over >= 0.8 s spans: update timing jitter fakes spikes
 BOARDING_RADIUS_CM = 150000.0  # the boarding height is a ground reference within 1.5 km
@@ -163,8 +167,9 @@ class VehicleDetector:
         dt = t1 - t0
         if dt > 0:
             h = ((x1 - x0) ** 2 + (y1 - y0) ** 2) ** 0.5 / dt
-            if h < HOVER_MAX_CMS and abs(z1 - z0) / dt >= HOVER_MIN_VZ_CMS:
-                self._hovers += 1  # straight up or down without moving across
+            vz = abs(z1 - z0) / dt
+            if (h < HOVER_MAX_CMS and vz >= HOVER_MIN_VZ_CMS) or (vz >= STEEP_MIN_VZ_CMS and vz >= h):
+                self._hovers += 1  # straight up or down, or steeper than any ground vehicle can climb or drop
                 if self._hovers >= HOVER_SAMPLES:
                     return True
             else:

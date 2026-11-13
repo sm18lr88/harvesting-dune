@@ -98,7 +98,7 @@ class Detector(IngestMixin, ControlsMixin, RankingMixin, OutputsMixin, StatusPag
         self._blows_world: tuple | None = None
         self.items = ItemSources(data_dir)  # looted materials: where each drops
         self.looted: dict[str, float] = {}  # cage key -> when it vanished right next to you
-        self.events: collections.deque[tuple[float, str]] = collections.deque(maxlen=20)
+        self.events: collections.deque[tuple[float, str, str | None]] = collections.deque(maxlen=20)  # (t, text, marker)
         self.notice: tuple[float, str] | None = None  # "area mined out -> next" for the badge
         self.ship_alert: tuple[float, str] | None = None  # "Downed ship! 1.2 km away", for any resource
         # ranking state

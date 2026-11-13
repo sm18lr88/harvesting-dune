@@ -426,6 +426,29 @@ def test_hovering_carrier_high_above_known_sand_is_an_ornithopter():
     assert det.vehicles.current == "ornithopter"
 
 
+def test_a_carrier_lifting_off_slowly_while_drifting_is_an_ornithopter():
+    """Live 2026-11-11, 6:19 PM Eastern (journal-20261111-181858-1): a carrier rose 31 m in 2 s at 5 km/h across,
+    then dropped 14 m/s at 6 km/h, and was called a buggy: 6 km/h failed the hover rule, 37 m in 5 s the climb rule."""
+    vd = VehicleDetector()
+    vd.last_vehicle = "buggy"
+    vd.on_session("Driving", None)
+    # (seconds, cm east, cm up): the recorded poses, about 2 s apart
+    for t, x, z in ((0, 0, 3680), (2, 1500, 4620), (4, 2890, 5400), (6, 6610, 5310), (8, 10280, 4570), (10, 14390, 3790),
+                    (13, 16970, 4420), (15, 17250, 7510), (17, 17580, 4350)):
+        vd.on_pose(float(t), Pose(float(x), 5.0, float(z)), None)
+    assert vd.current == "ornithopter" and vd.confident
+
+
+def test_a_vehicle_up_and_down_a_steep_dune_is_never_called_an_ornithopter():
+    vd = VehicleDetector()
+    vd.on_session("Driving", None)
+    z = 0.0
+    for i in range(21):  # 25 km/h across, 4.5 m/s up then down: a 32 degree slope, steep but drivable
+        z += 450.0 if (i // 5) % 2 == 0 else -450.0
+        vd.on_pose(float(i), Pose(10.0 + 700.0 * i, 5.0, z), None)
+    assert vd.current != "ornithopter"
+
+
 
 def bumpy(vd, speed_cms, seconds, t0=0.0, x0=10.0, bump_every=4, bump_cm=900.0):
     """A ground vehicle over dunes: a sharp 9 m rise and fall every few seconds."""

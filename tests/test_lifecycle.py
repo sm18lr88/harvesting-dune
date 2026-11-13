@@ -34,6 +34,20 @@ def test_dormant_spawn_point_turning_active_is_a_spice_blow():
     assert det.recent_event(2 + 91) is None  # shown for 90 s
 
 
+def test_a_size_search_hears_only_news_of_its_own_size():
+    # live 2026-11-11: a large-field search showed "Spice blow! medium field" on the badge
+    det = Detector(None, min_rescore_s=0)
+    det.ui("resource", "spice_large")
+    session(det, "DD")
+    pose(det, 10, 0)
+    actors(det, spice(1, 3000 * 100, 0, "Medium", fill=0, spawned=False), t=1)
+    actors(det, spice(1, 3000 * 100, 0, "Medium", fill=0.05, spawned=True), t=2)
+    assert det.recent_event(2) == "Spice blow! medium field 3.0 km away"
+    assert "Spice blow" not in det.badge(now=2)
+    det.ui("resource", "spice")  # every size
+    assert det.badge(now=2).startswith("Spice blow!")
+
+
 def test_field_coming_into_range_is_not_a_blow():
     det = Detector(None)
     session(det, "DD")
